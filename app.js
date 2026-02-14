@@ -11,11 +11,13 @@ let useFrontCamera = false;
 let isSwitchingCamera = false;
 let modeSwitchTimeout = null;
 let isDOMManipulationSafe = true;
+let selectedClass = null; // Currently selected class for capture
 
 // Constants
 const STORAGE_KEY = 'myCarDetectorModel';
+const DATASET_STORAGE_KEY = 'carDetectorDataset';
 const CONFIDENCE_THRESHOLD = 0.80;
-const APP_VERSION = 'v9';
+const APP_VERSION = 'v10';
 const IS_IOS = /iPhone|iPad|iPod/.test(navigator.userAgent);
 const IOS_VIDEO_READY_DELAY = 400; // iOS needs more time for video initialization
 const DEFAULT_VIDEO_READY_DELAY = 200;
@@ -26,7 +28,7 @@ const recognitionTab = document.getElementById('recognition-tab');
 const trainingMode = document.getElementById('training-mode');
 const recognitionMode = document.getElementById('recognition-mode');
 const addClassBtn = document.getElementById('add-class-btn');
-const classesContainer = document.getElementById('classes-container');
+const classList = document.getElementById('class-list');
 const resultOverlay = document.getElementById('result-overlay');
 const recognitionStatus = document.getElementById('recognition-status');
 const saveModelBtn = document.getElementById('save-model-btn');
@@ -268,118 +270,80 @@ let renderClassesRetryCount = 0;
 const MAX_RENDER_RETRIES = 10; // Prevent infinite recursion
 
 function renderClasses() {
-    // NEVER render during capture on iOS
-    if (!isDOMManipulationSafe && IS_IOS) {
-        renderClassesRetryCount++;
-        if (renderClassesRetryCount > MAX_RENDER_RETRIES) {
-            console.error('[SKIP] Max retries reached, forcing render');
-            renderClassesRetryCount = 0;
-            // Force render anyway to prevent UI deadlock
-        } else {
-            console.warn(`[SKIP] Postponing renderClasses until capture stops (retry ${renderClassesRetryCount}/${MAX_RENDER_RETRIES})`);
-            setTimeout(renderClasses, 500);
-            return;
-        }
+    console.log(`[${APP_VERSION}] Rendering classes, current count:`, Object.keys(classes).length);
+    
+    const container = document.getElementById('class-list');
+    if (!container) return;
+    
+    // v10: Safe to use innerHTML here - class-list is separate from video container
+    container.innerHTML = '';
+    
+    if (Object.keys(classes).length === 0) {
+        container.innerHTML = '<div style="color: #8b949e; text-align: center; padding: 20px;">No classes yet. Add your first class!</div>';
+        document.getElementById('capture-btn').disabled = true;
+        return;
     }
     
-    // Reset retry counter on successful render
-    renderClassesRetryCount = 0;
-    
-    // NEVER use innerHTML near video on iOS!
-    console.log('[v9] Rendering classes, current count:', Object.keys(classes).length);
-    
-    // Remove old cards MANUALLY
-    const existingCards = classesContainer.querySelectorAll('.class-card');
-    existingCards.forEach(card => {
-        card.remove(); // Safer than innerHTML = ''
-    });
-    
-    // Create new cards
     Object.keys(classes).forEach(className => {
-        const classData = classes[className];
+        const classItem = document.createElement('div');
+        classItem.style.cssText = `
+            display: flex;
+            align-items: center;
+            padding: 12px;
+            margin: 8px 0;
+            background: #0d1117;
+            border: 2px solid ${selectedClass === className ? '#58a6ff' : '#21262d'};
+            border-radius: 8px;
+            cursor: pointer;
+            transition: all 0.2s;
+        `;
         
-        const card = document.createElement('div');
-        card.className = 'class-card';
+        // Radio button
+        const radio = document.createElement('input');
+        radio.type = 'radio';
+        radio.name = 'class-selector';
+        radio.checked = selectedClass === className;
+        radio.style.cssText = 'margin-right: 12px; cursor: pointer;';
         
-        // Create elements safely to prevent XSS
-        const classHeader = document.createElement('div');
-        classHeader.className = 'class-header';
+        // Class name + examples
+        const label = document.createElement('label');
+        label.style.cssText = 'flex: 1; cursor: pointer; color: #c9d1d9; font-size: 16px;';
+        label.textContent = `${className} (${classes[className].examples} примеров)`;
         
-        const headerContent = document.createElement('div');
-        
-        const nameDiv = document.createElement('div');
-        nameDiv.className = 'class-name';
-        nameDiv.textContent = classData.name;
-        
-        const examplesDiv = document.createElement('div');
-        examplesDiv.className = 'class-examples';
-        examplesDiv.textContent = `📸 ${classData.examples} примеров`;
-        
-        headerContent.appendChild(nameDiv);
-        headerContent.appendChild(examplesDiv);
-        classHeader.appendChild(headerContent);
-        
-        const actionsDiv = document.createElement('div');
-        actionsDiv.className = 'class-actions';
-        
-        const captureBtn = document.createElement('button');
-        captureBtn.className = 'capture-btn';
-        captureBtn.dataset.class = className;
-        captureBtn.textContent = 'Захватить';
-        
+        // Delete button
         const deleteBtn = document.createElement('button');
-        deleteBtn.className = 'delete-btn';
-        deleteBtn.dataset.class = className;
         deleteBtn.textContent = '🗑️';
-        
-        actionsDiv.appendChild(captureBtn);
-        actionsDiv.appendChild(deleteBtn);
-        
-        card.appendChild(classHeader);
-        card.appendChild(actionsDiv);
-        classesContainer.appendChild(card);
-    });
-    
-    // Re-attach event listeners
-    attachClassEventListeners();
-    
-    // iOS Safari: NEVER modify video element or srcObject during DOM manipulation!
-    // Video is now in isolated container, but still verify state
-    console.log('[v9] Classes rendered, video state:', {
-        paused: videoElement?.paused,
-        readyState: videoElement?.readyState,
-        streamActive: stream?.active
-    });
-}
-
-// Separate function to attach event listeners (called after renderClasses)
-function attachClassEventListeners() {
-    console.log('[v9] Attaching event listeners to capture buttons');
-    
-    document.querySelectorAll('.capture-btn').forEach(btn => {
-        const className = btn.dataset.class;
-        
-        btn.addEventListener('mousedown', () => startCapture(className));
-        btn.addEventListener('touchstart', (e) => {
-            e.preventDefault();
+        deleteBtn.style.cssText = `
+            padding: 8px 12px;
+            background: #21262d;
+            border: 1px solid #30363d;
+            border-radius: 6px;
+            cursor: pointer;
+            font-size: 16px;
+        `;
+        deleteBtn.onclick = (e) => {
             e.stopPropagation();
-            console.log('[v9] Touch start on:', btn.dataset.class);
-            startCapture(className);
-        }, { passive: false });
-        btn.addEventListener('mouseup', stopCapture);
-        btn.addEventListener('touchend', (e) => {
-            e.preventDefault();
-            e.stopPropagation();
-            console.log('[v9] Touch end');
-            stopCapture();
-        }, { passive: false });
-        btn.addEventListener('mouseleave', stopCapture);
-        btn.addEventListener('touchcancel', stopCapture);
+            deleteClass(className);
+        };
+        
+        // Click handler for entire row
+        classItem.onclick = () => {
+            selectedClass = className;
+            document.getElementById('capture-btn').disabled = false;
+            renderClasses(); // Re-render to update selection
+        };
+        
+        classItem.appendChild(radio);
+        classItem.appendChild(label);
+        classItem.appendChild(deleteBtn);
+        container.appendChild(classItem);
     });
     
-    document.querySelectorAll('.delete-btn').forEach(btn => {
-        btn.addEventListener('click', () => deleteClass(btn.dataset.class));
-    });
+    // Auto-select first class if none selected
+    if (!selectedClass && Object.keys(classes).length > 0) {
+        selectedClass = Object.keys(classes)[0];
+        document.getElementById('capture-btn').disabled = false;
+    }
 }
 
 // Capture logic
@@ -397,7 +361,7 @@ async function startCapture(className) {
     
     // CRITICAL: Verify stream is active before ANYTHING
     if (!stream || !stream.active) {
-        console.error('[v9] Stream not active! Current state:', {
+        console.error('[v10] Stream not active! Current state:', {
             streamExists: !!stream,
             streamActive: stream?.active,
             videoSrc: !!videoElement?.srcObject
@@ -410,7 +374,7 @@ async function startCapture(className) {
     
     // Verify video element (removed readyState check for iOS compatibility)
     if (!videoElement) {
-        console.error('[v9] Video element not found');
+        console.error('[v10] Video element not found');
         errorElement.textContent = '⚠️ Видео не готово. Подождите или перезапустите камеру.';
         return;
     }
@@ -450,12 +414,12 @@ async function startCapture(className) {
     isCapturing = true;
     isDOMManipulationSafe = false;
     currentCapturingClass = className;
-    console.log(`[v9] Starting capture for ${className}`);
+    console.log(`[v10] Starting capture for ${className}`);
     
-    const btn = document.querySelector(`.capture-btn[data-class="${className}"]`);
+    const btn = document.getElementById('capture-btn');
     if (btn) {
-        btn.classList.add('capturing');
-        btn.textContent = 'Захват...';
+        btn.textContent = '🔴 Capturing...';
+        btn.style.background = 'linear-gradient(135deg, #f85149 0%, #da3633 100%)';
     }
     
     async function captureFrame() {
@@ -466,24 +430,54 @@ async function startCapture(className) {
         try {
             // iOS Safari aggressive fix - skip readyState check entirely
             if (!videoElement || !videoElement.videoWidth || !videoElement.videoHeight) {
-                console.warn('[v9] Video not ready, retrying...');
+                console.warn('[v10] Video not ready, retrying...');
                 captureInterval = setTimeout(captureFrame, 200);
                 return;
             }
             
             // iOS Safari: Force check that video is actually playing
             if (videoElement.paused) {
-                console.warn('[v9] Video paused, attempting to play...');
-                videoElement.play().catch(err => console.error('[v9] Play failed:', err));
+                console.warn('[v10] Video paused, attempting to play...');
+                videoElement.play().catch(err => console.error('[v10] Play failed:', err));
                 captureInterval = setTimeout(captureFrame, 200);
                 return;
             }
             
-            console.log('[v9] ✅ Capturing frame, video:', videoElement.videoWidth, 'x', videoElement.videoHeight);
+            console.log('[v10] ✅ Capturing frame, video:', videoElement.videoWidth, 'x', videoElement.videoHeight);
             
             const img = tf.browser.fromPixels(videoElement);
             const activation = mobilenetModel.infer(img, true);
-            classifier.addExample(activation, className);
+            
+            try {
+                classifier.addExample(activation, className);
+            } catch (error) {
+                if (error.message && error.message.includes('shape')) {
+                    console.warn('[v10] ⚠️ Shape mismatch detected - recreating classifier');
+                    
+                    // Dispose old classifier
+                    classifier.dispose();
+                    
+                    // Create fresh classifier
+                    classifier = knnClassifier.create();
+                    
+                    // Clear localStorage to prevent reload of bad data
+                    localStorage.removeItem(STORAGE_KEY);
+                    localStorage.removeItem(DATASET_STORAGE_KEY);
+                    
+                    // Reset all class example counts
+                    Object.keys(classes).forEach(cls => {
+                        classes[cls].examples = 0;
+                    });
+                    
+                    // Try again with fresh classifier
+                    classifier.addExample(activation, className);
+                    
+                    console.log('[v10] ✅ Classifier recreated successfully');
+                } else {
+                    throw error; // Re-throw if not shape error
+                }
+            }
+            
             img.dispose();
             // Note: do NOT dispose activation - KNN classifier keeps a reference to it
             
@@ -504,15 +498,16 @@ async function startCapture(className) {
                 navigator.vibrate(30);
             }
             
-            // v9: Console log for debugging
-            console.log(`[v9] 📸 Frame captured! ${className} now has ${classes[className].examples} examples`);
+            // v10: Console log for debugging
+            console.log(`[v10] 📸 Frame captured! ${className} now has ${classes[className].examples} examples`);
             
-            // Update UI
-            const examplesEl = document.querySelector(`.capture-btn[data-class="${className}"]`)
-                ?.parentElement?.parentElement?.querySelector('.class-examples');
-            if (examplesEl) {
-                examplesEl.textContent = `📸 ${classes[className].examples} примеров`;
-            }
+            // Update UI - find the label for the selected class in the radio button list
+            const labels = document.querySelectorAll('#class-list label');
+            labels.forEach(label => {
+                if (label.textContent.startsWith(className + ' (')) {
+                    label.textContent = `${className} (${classes[className].examples} примеров)`;
+                }
+            });
             
             captureInterval = setTimeout(captureFrame, 100);
             
@@ -526,7 +521,7 @@ async function startCapture(className) {
 }
 
 function stopCapture() {
-    console.log('[MOBILE FIX] Stopping capture');
+    console.log('[v10] Stopping capture');
     isCapturing = false;
     isDOMManipulationSafe = true;
     currentCapturingClass = null;
@@ -536,10 +531,11 @@ function stopCapture() {
         captureInterval = null;
     }
     
-    document.querySelectorAll('.capture-btn').forEach(btn => {
-        btn.classList.remove('capturing');
-        btn.textContent = 'Захватить';
-    });
+    const btn = document.getElementById('capture-btn');
+    if (btn) {
+        btn.textContent = '📸 Take Photo';
+        btn.style.background = 'linear-gradient(135deg, #58a6ff 0%, #1f6feb 100%)';
+    }
     
     // Debounce auto-save to avoid blocking UI on mobile
     setTimeout(() => autoSave(), 500);
@@ -808,6 +804,31 @@ function autoSave() {
 trainingTab.addEventListener('click', () => switchMode('training'));
 recognitionTab.addEventListener('click', () => switchMode('recognition'));
 addClassBtn.addEventListener('click', addClassPrompt);
+
+// Single capture button
+const captureBtn = document.getElementById('capture-btn');
+
+captureBtn.addEventListener('mousedown', () => {
+    if (selectedClass) {
+        startCapture(selectedClass);
+    }
+});
+
+captureBtn.addEventListener('mouseup', stopCapture);
+captureBtn.addEventListener('mouseleave', stopCapture);
+
+captureBtn.addEventListener('touchstart', (e) => {
+    e.preventDefault();
+    if (selectedClass) {
+        startCapture(selectedClass);
+    }
+}, { passive: false });
+
+captureBtn.addEventListener('touchend', (e) => {
+    e.preventDefault();
+    stopCapture();
+}, { passive: false });
+
 saveModelBtn.addEventListener('click', saveModelToStorage);
 loadModelBtn.addEventListener('click', loadModelFromStorage);
 clearModelBtn.addEventListener('click', clearModel);
@@ -815,7 +836,7 @@ flipCameraBtn.addEventListener('click', flipCamera);
 
 // Restart camera button handler
 async function restartCamera() {
-    console.log('[v9] Manual camera restart requested');
+    console.log('[v10] Manual camera restart requested');
     
     restartCameraBtn.disabled = true;
     restartCameraBtn.textContent = '⏳ Перезапуск...';
@@ -828,7 +849,7 @@ async function restartCamera() {
         // Stop old stream
         if (stream) {
             stream.getTracks().forEach(track => {
-                console.log('[v9] Stopping track:', track.kind);
+                console.log('[v10] Stopping track:', track.kind);
                 track.stop();
             });
         }
@@ -849,7 +870,7 @@ async function restartCamera() {
         restartCameraBtn.classList.remove('pulse');
         
     } catch (error) {
-        console.error('[v9] Restart failed:', error);
+        console.error('[v10] Restart failed:', error);
         alert('❌ Не удалось перезапустить: ' + error.message);
         restartCameraBtn.textContent = '⚠️ Попробовать ещё раз';
     } finally {

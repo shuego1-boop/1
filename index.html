@@ -11,7 +11,7 @@
 </head>
 <body>
     <div class="container">
-        <h1>🚗 My Car Detector <span style="font-size: 14px; color: #8b949e;">v9</span></h1>
+        <h1>🚗 My Car Detector <span style="font-size: 14px; color: #8b949e;">v10</span></h1>
         
         <!-- Mode Tabs -->
         <div class="mode-tabs">
@@ -27,15 +27,52 @@
 
         <!-- Training Mode -->
         <div id="training-mode" class="mode-content active">
-            <div class="hint">
-                💡 Рекомендуется 15-20 примеров на класс
+            <!-- Single Capture Button -->
+            <div style="text-align: center; margin: 16px 0;">
+                <button id="capture-btn" disabled style="
+                    width: 100%;
+                    max-width: 400px;
+                    padding: 20px;
+                    font-size: 18px;
+                    font-weight: bold;
+                    background: linear-gradient(135deg, #58a6ff 0%, #1f6feb 100%);
+                    color: white;
+                    border: none;
+                    border-radius: 12px;
+                    cursor: pointer;
+                    transition: all 0.2s;
+                ">
+                    📸 Take Photo
+                </button>
+                <div style="color: #8b949e; font-size: 12px; margin-top: 8px;">
+                    Hold to capture continuously
+                </div>
             </div>
             
-            <button id="add-class-btn" class="primary-btn">➕ Добавить класс</button>
-            
-            <div id="classes-container" class="classes-container"></div>
-            
-            <div class="training-hint">💡 Совет: добавьте минимум 2 класса и 20+ примеров в каждый для точного распознавания</div>
+            <!-- Class Selector -->
+            <div style="margin: 16px 0;">
+                <h3 style="color: #c9d1d9; margin-bottom: 12px;">📂 Select class to train:</h3>
+                <div id="class-list" style="
+                    background: #161b22;
+                    border: 1px solid #30363d;
+                    border-radius: 8px;
+                    padding: 12px;
+                ">
+                    <!-- Radio buttons will be rendered here -->
+                </div>
+                <button id="add-class-btn" style="
+                    width: 100%;
+                    padding: 12px;
+                    margin-top: 12px;
+                    background: #21262d;
+                    color: #58a6ff;
+                    border: 1px solid #30363d;
+                    border-radius: 6px;
+                    cursor: pointer;
+                ">
+                    ➕ Add New Class
+                </button>
+            </div>
         </div>
 
         <!-- Recognition Mode -->
@@ -60,7 +97,7 @@
 
         <div id="error" class="error"></div>
         
-        <div style="text-align: center; color: #484f58; font-size: 11px; margin-top: 16px;">v9</div>
+        <div style="text-align: center; color: #484f58; font-size: 11px; margin-top: 16px;">v10</div>
     </div>
 
     <script src="https://cdn.jsdelivr.net/npm/@tensorflow/tfjs@latest/dist/tf.min.js"></script>
