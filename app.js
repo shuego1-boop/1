@@ -33,7 +33,7 @@ const IOS_VIDEO_READY_DELAY = 400; // iOS needs more time for video initializati
 const DEFAULT_VIDEO_READY_DELAY = 200;
 const AUTOSAVE_DEBOUNCE_MS = 2000;
 const DEFAULT_MODEL_ID = 'model-1'; // v12: Default model for public mode
-const CHUNK_SIZE = 700 * 1024; // v12: 700KB chunks to stay under 1MB Firestore limit
+const CHUNK_SIZE = 500 * 1024; // v12: 500KB chunks before encoding (~667KB after base64, stays under 1MB with metadata)
 
 // v11: Firebase Configuration
 // Note: Firebase API keys are designed to be public. Security is enforced
@@ -390,10 +390,13 @@ async function saveModelToFirestoreChunks(modelId, modelJson, datasetVersion) {
     const jsonString = typeof modelJson === 'string' ? modelJson : JSON.stringify(modelJson);
     const chunks = [];
     
-    // Split into chunks of CHUNK_SIZE (700KB)
+    // Split into chunks of CHUNK_SIZE (500KB before encoding)
     for (let i = 0; i < jsonString.length; i += CHUNK_SIZE) {
         const chunk = jsonString.substring(i, Math.min(i + CHUNK_SIZE, jsonString.length));
-        const base64Chunk = btoa(unescape(encodeURIComponent(chunk))); // Encode to base64
+        // Use TextEncoder for proper UTF-8 handling
+        const encoder = new TextEncoder();
+        const utf8Bytes = encoder.encode(chunk);
+        const base64Chunk = btoa(String.fromCharCode(...utf8Bytes));
         chunks.push({
             v: datasetVersion,
             i: chunks.length,
@@ -462,7 +465,11 @@ async function loadModelFromFirestoreChunks(modelId) {
     chunksSnapshot.docs.forEach(doc => {
         const chunkData = doc.data();
         const base64Chunk = chunkData.data;
-        const decodedChunk = decodeURIComponent(escape(atob(base64Chunk)));
+        // Use TextDecoder for proper UTF-8 handling
+        const decoder = new TextDecoder();
+        const binaryString = atob(base64Chunk);
+        const utf8Bytes = Uint8Array.from(binaryString, c => c.charCodeAt(0));
+        const decodedChunk = decoder.decode(utf8Bytes);
         jsonString += decodedChunk;
     });
     
