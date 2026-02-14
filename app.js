@@ -15,6 +15,7 @@ let selectedClass = null; // Currently selected class for capture
 
 // Constants
 const STORAGE_KEY = 'myCarDetectorModel';
+const DATASET_STORAGE_KEY = 'carDetectorDataset';
 const CONFIDENCE_THRESHOLD = 0.80;
 const APP_VERSION = 'v10';
 const IS_IOS = /iPhone|iPad|iPod/.test(navigator.userAgent);
@@ -274,6 +275,7 @@ function renderClasses() {
     const container = document.getElementById('class-list');
     if (!container) return;
     
+    // v10: Safe to use innerHTML here - class-list is separate from video container
     container.innerHTML = '';
     
     if (Object.keys(classes).length === 0) {
@@ -459,8 +461,8 @@ async function startCapture(className) {
                     classifier = knnClassifier.create();
                     
                     // Clear localStorage to prevent reload of bad data
-                    localStorage.removeItem('carDetectorModel');
-                    localStorage.removeItem('carDetectorDataset');
+                    localStorage.removeItem(STORAGE_KEY);
+                    localStorage.removeItem(DATASET_STORAGE_KEY);
                     
                     // Reset all class example counts
                     Object.keys(classes).forEach(cls => {
