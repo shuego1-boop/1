@@ -7,11 +7,11 @@
     <meta http-equiv="Pragma" content="no-cache">
     <meta http-equiv="Expires" content="0">
     <title>🚗 My Car Detector</title>
-    <link rel="stylesheet" href="style.css?v=7">
+    <link rel="stylesheet" href="style.css?v=8">
 </head>
 <body>
     <div class="container">
-        <h1>🚗 My Car Detector <span style="font-size: 14px; color: #8b949e;">v7</span></h1>
+        <h1>🚗 My Car Detector <span style="font-size: 14px; color: #8b949e;">v8</span></h1>
         
         <!-- Mode Tabs -->
         <div class="mode-tabs">
@@ -19,9 +19,9 @@
             <button id="recognition-tab" class="tab-btn">🎯 Распознавание</button>
         </div>
 
-        <!-- Camera Preview -->
-        <div class="camera-wrapper">
-            <video id="webcam" autoplay playsinline></video>
+        <!-- ИЗОЛИРОВАННЫЙ VIDEO КОНТЕЙНЕР -->
+        <div class="camera-wrapper-isolated">
+            <video id="webcam" autoplay playsinline muted></video>
             <div id="result-overlay" class="result-overlay"></div>
         </div>
 
@@ -55,19 +55,17 @@
         <!-- Camera Controls -->
         <div class="camera-controls">
             <button id="flip-camera-btn" class="control-btn">🔄 Переключить камеру</button>
-            <button id="restart-camera-btn" class="control-btn" style="display:none;">
-                🔄 Камера зависла? Перезапустить
-            </button>
+            <button id="restart-camera-btn" class="control-btn warning">⚠️ Камера зависла? Перезапустить</button>
         </div>
 
         <div id="error" class="error"></div>
         
-        <div style="text-align: center; color: #484f58; font-size: 11px; margin-top: 16px;">v7</div>
+        <div style="text-align: center; color: #484f58; font-size: 11px; margin-top: 16px;">v8</div>
     </div>
 
     <script src="https://cdn.jsdelivr.net/npm/@tensorflow/tfjs@latest/dist/tf.min.js"></script>
     <script src="https://cdn.jsdelivr.net/npm/@tensorflow-models/mobilenet@latest/dist/mobilenet.min.js"></script>
     <script src="https://cdn.jsdelivr.net/npm/@tensorflow-models/knn-classifier@latest/dist/knn-classifier.min.js"></script>
-    <script src="app.js?v=7"></script>
+    <script src="app.js?v=8"></script>
 </body>
 </html>

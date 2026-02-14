@@ -64,6 +64,27 @@ h1 {
     margin-bottom: 16px;
 }
 
+/* Изолированный контейнер для video */
+.camera-wrapper-isolated {
+    position: relative;
+    width: 100%;
+    max-width: 640px;
+    margin: 0 auto 20px;
+    background: #000;
+    border-radius: 12px;
+    overflow: hidden;
+    box-shadow: 0 8px 24px rgba(0, 0, 0, 0.5);
+    /* КРИТИЧНО: изолировать от других DOM изменений */
+    transform: translateZ(0);
+    will-change: transform;
+}
+
+.camera-wrapper-isolated video {
+    width: 100%;
+    height: auto;
+    display: block;
+}
+
 #webcam {
     width: 100%;
     height: auto;
@@ -279,6 +300,29 @@ h1 {
 .control-btn.danger:hover {
     background-color: #da3633;
     color: #ffffff;
+}
+
+/* Warning button style */
+.control-btn.warning {
+    background: #f85149;
+    color: white;
+    border: 2px solid #ff6b6b;
+    font-weight: bold;
+}
+
+.control-btn.warning:hover {
+    background: #ff6b6b;
+    transform: scale(1.02);
+}
+
+/* Pulse animation for restart button */
+@keyframes pulse {
+    0%, 100% { transform: scale(1); }
+    50% { transform: scale(1.05); }
+}
+
+.control-btn.pulse {
+    animation: pulse 1s infinite;
 }
 
 /* Camera Controls */
