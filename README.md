@@ -1,8 +1,26 @@
-# My Car Detector v11 🚗
+# My Car Detector v12 🚗
 
 A real-time object detection web app using TensorFlow.js with KNN classifier and MobileNet.
 
-## v11 Features
+## v12 Features
+
+### Hard Public/Admin Split (NEW in v12)
+- **Public mode (default)**: Recognition only - no login required
+  - ✅ Can use recognition to identify objects
+  - ❌ Cannot see model catalog or management controls
+  - ❌ Cannot access training mode
+  - ❌ Cannot add classes or capture frames
+  - ❌ Cannot save, rename, or delete models
+- **Admin mode (after login)**: Full functionality
+  - ✅ Training mode with class management
+  - ✅ Model catalog access
+  - ✅ Save/rename/delete models
+  - ✅ Autosave enabled
+
+### Improved Admin Authentication (NEW in v12)
+- **User-friendly error messages**: Clear Russian messages for common Firebase auth errors
+- **Diagnostics**: Firebase project configuration displayed in login modal
+- **Better logging**: Error codes logged for troubleshooting
 
 ### Public Model Catalog
 - **Public mode by default**: No login required to use existing models
@@ -44,7 +62,8 @@ A real-time object detection web app using TensorFlow.js with KNN classifier and
 1. Go to Firebase Console → Authentication
 2. Click "Sign-in method" tab
 3. Enable "Email/Password" provider
-4. Save changes
+4. **Add authorized domain**: In the same tab, scroll down to "Authorized domains" and add `shuego1-boop.github.io` (if deploying to GitHub Pages)
+5. Save changes
 
 ### Step 2: Create Admin User
 
@@ -113,7 +132,37 @@ service firebase.storage {
 }
 ```
 
-### Step 6: Initialize Default Models (Optional)
+### Step 6: Verify Security Rules
+
+**IMPORTANT**: UI hiding is not security. Real protection is enforced by Firebase Security Rules.
+
+#### How to verify rules are working:
+
+1. **Test public read access**:
+   - Open the app in Incognito mode (not logged in)
+   - You should be able to view recognition mode only
+   - Model catalog and training features should be hidden
+
+2. **Test public write denied**:
+   - Open browser console (F12)
+   - Try to write: `db.collection('models').add({test: true})`
+   - Should fail with "permission-denied" error
+
+3. **Test admin write access**:
+   - Login as admin
+   - Training and model management UI should appear
+   - Try saving a model - should succeed
+
+4. **Test Storage rules**:
+   - In Incognito mode, you can still download/load models (public read)
+   - Attempting to upload would fail (admin write only)
+
+#### Error handling in app:
+- Non-admin attempts at admin actions show "Admin access required"
+- Firebase permission-denied errors show clear messages
+- All admin actions are blocked in public mode via UI and code checks
+
+### Step 7: Initialize Default Models (Optional)
 
 After logging in as admin:
 1. Click "🔐 Admin" button
@@ -216,6 +265,7 @@ This app includes extensive fixes for iOS Safari:
 - `README.md` - This file
 
 ### Version History
+- **v12**: Hard Public/Admin split + improved auth error handling + security enforcement
 - **v11**: Firebase public catalog + admin mode + "Не распознано"
 - **v10**: Enhanced iOS Safari compatibility with video isolation
 - **v9**: Visual feedback and improved mobile UX
