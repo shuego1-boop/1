@@ -13,11 +13,10 @@ let modeSwitchTimeout = null;
 let isDOMManipulationSafe = true;
 let selectedClass = null; // Currently selected class for capture
 
-// v11: Firebase state
+// v12: Firebase state (storage no longer used - using Firestore chunks)
 let isAdminMode = false;
 let currentUser = null;
 let db = null;
-let storage = null;
 let auth = null;
 let modelCatalog = [];
 let currentModelId = null;
@@ -33,6 +32,8 @@ const IS_IOS = /iPhone|iPad|iPod/.test(navigator.userAgent);
 const IOS_VIDEO_READY_DELAY = 400; // iOS needs more time for video initialization
 const DEFAULT_VIDEO_READY_DELAY = 200;
 const AUTOSAVE_DEBOUNCE_MS = 2000;
+const DEFAULT_MODEL_ID = 'model-1'; // v12: Default model for public mode
+const CHUNK_SIZE = 700 * 1024; // v12: 700KB chunks to stay under 1MB Firestore limit
 
 // v11: Firebase Configuration
 // Note: Firebase API keys are designed to be public. Security is enforced
@@ -84,7 +85,7 @@ const deleteModelBtn = document.getElementById('delete-model-btn');
 const initDefaultsBtn = document.getElementById('init-defaults-btn');
 const adminEmailDisplay = document.getElementById('admin-email-display');
 
-// v11: Initialize Firebase
+// v12: Initialize Firebase (Storage no longer needed - using Firestore chunks)
 function initFirebase() {
     try {
         if (typeof firebase === 'undefined') {
@@ -94,12 +95,11 @@ function initFirebase() {
         firebase.initializeApp(firebaseConfig);
         auth = firebase.auth();
         db = firebase.firestore();
-        storage = firebase.storage();
+        // v12: No longer initializing storage - using Firestore chunks instead
         
         console.log(`[${APP_VERSION}] Firebase initialized`);
         console.log(`[${APP_VERSION}] Project ID: ${firebaseConfig.projectId}`);
         console.log(`[${APP_VERSION}] Auth Domain: ${firebaseConfig.authDomain}`);
-        console.log(`[${APP_VERSION}] Storage Bucket: ${firebaseConfig.storageBucket}`);
         
         // Listen for auth state changes
         auth.onAuthStateChanged(handleAuthStateChange);
@@ -384,7 +384,94 @@ async function initializeDefaultModels() {
     }
 }
 
-// v11: Save model to Firebase Storage and Firestore
+// v12: Save model dataset to Firestore chunks
+async function saveModelToFirestoreChunks(modelId, modelJson, datasetVersion) {
+    const jsonString = typeof modelJson === 'string' ? modelJson : JSON.stringify(modelJson);
+    const chunks = [];
+    
+    // Split into chunks of CHUNK_SIZE (700KB)
+    for (let i = 0; i < jsonString.length; i += CHUNK_SIZE) {
+        const chunk = jsonString.substring(i, Math.min(i + CHUNK_SIZE, jsonString.length));
+        const base64Chunk = btoa(unescape(encodeURIComponent(chunk))); // Encode to base64
+        chunks.push({
+            v: datasetVersion,
+            i: chunks.length,
+            data: base64Chunk,
+            bytes: base64Chunk.length
+        });
+    }
+    
+    console.log(`[${APP_VERSION}] Saving ${chunks.length} chunks for model ${modelId}`);
+    
+    // Delete old chunks first
+    const oldChunksSnapshot = await db.collection('modelDatasets')
+        .doc(modelId)
+        .collection('chunks')
+        .get();
+    
+    const deleteBatch = db.batch();
+    oldChunksSnapshot.docs.forEach(doc => {
+        deleteBatch.delete(doc.ref);
+    });
+    await deleteBatch.commit();
+    console.log(`[${APP_VERSION}] Deleted ${oldChunksSnapshot.size} old chunks`);
+    
+    // Save new chunks
+    const saveBatch = db.batch();
+    chunks.forEach((chunkData, idx) => {
+        const chunkRef = db.collection('modelDatasets')
+            .doc(modelId)
+            .collection('chunks')
+            .doc(`chunk-${idx}`);
+        saveBatch.set(chunkRef, chunkData);
+    });
+    
+    // Update dataset metadata
+    const datasetRef = db.collection('modelDatasets').doc(modelId);
+    saveBatch.set(datasetRef, {
+        datasetVersion: datasetVersion,
+        updatedAt: firebase.firestore.FieldValue.serverTimestamp()
+    });
+    
+    await saveBatch.commit();
+    console.log(`[${APP_VERSION}] Saved ${chunks.length} chunks to Firestore`);
+    
+    return chunks.length;
+}
+
+// v12: Load model dataset from Firestore chunks
+async function loadModelFromFirestoreChunks(modelId) {
+    console.log(`[${APP_VERSION}] Loading model from Firestore chunks: ${modelId}`);
+    
+    // Get chunks ordered by index
+    const chunksSnapshot = await db.collection('modelDatasets')
+        .doc(modelId)
+        .collection('chunks')
+        .orderBy('i')
+        .get();
+    
+    if (chunksSnapshot.empty) {
+        throw new Error('No chunks found for this model');
+    }
+    
+    console.log(`[${APP_VERSION}] Found ${chunksSnapshot.size} chunks`);
+    
+    // Reconstruct JSON from chunks
+    let jsonString = '';
+    chunksSnapshot.docs.forEach(doc => {
+        const chunkData = doc.data();
+        const base64Chunk = chunkData.data;
+        const decodedChunk = decodeURIComponent(escape(atob(base64Chunk)));
+        jsonString += decodedChunk;
+    });
+    
+    console.log(`[${APP_VERSION}] Reconstructed JSON string, length: ${jsonString.length}`);
+    
+    const modelData = JSON.parse(jsonString);
+    return modelData;
+}
+
+// v12: Save model to Firestore chunks (replaces Firebase Storage)
 async function saveModelToFirebase() {
     if (!isAdminMode) {
         alert('Admin access required to save models');
@@ -437,30 +524,33 @@ async function saveModelToFirebase() {
         
         console.log(`[${APP_VERSION}] Uploading model ${selectedModelId}, size: ${sizeMB} MB`);
         
-        // Upload to Firebase Storage
-        const storagePath = `models/${selectedModelId}/dataset.json`;
-        const storageRef = storage.ref(storagePath);
+        // v12: Get or create dataset version
+        const modelDoc = await db.collection('models').doc(selectedModelId).get();
+        const currentDatasetVersion = modelDoc.exists ? (modelDoc.data().datasetVersion || 0) : 0;
+        const newDatasetVersion = currentDatasetVersion + 1;
         
-        await storageRef.putString(modelJson, 'raw', {
-            contentType: 'application/json'
-        });
+        // v12: Save to Firestore chunks instead of Storage
+        const chunksCount = await saveModelToFirestoreChunks(selectedModelId, modelJson, newDatasetVersion);
         
-        console.log(`[${APP_VERSION}] Model uploaded to Storage`);
+        console.log(`[${APP_VERSION}] Model uploaded to Firestore (${chunksCount} chunks)`);
         
         // Update Firestore metadata
-        await db.collection('models').doc(selectedModelId).update({
-            storagePath: storagePath,
+        await db.collection('models').doc(selectedModelId).set({
+            name: modelDoc.exists ? modelDoc.data().name : `Model ${selectedModelId}`,
+            format: 'knn-mobilenet-v1',
             updatedAt: firebase.firestore.FieldValue.serverTimestamp(),
             sizeBytes: sizeBytes,
             classesCount: Object.keys(classes).length,
             examplesCount: Object.values(classes).reduce((sum, cls) => sum + cls.examples, 0),
-            appVersion: APP_VERSION
-        });
+            appVersion: APP_VERSION,
+            datasetVersion: newDatasetVersion,
+            chunksCount: chunksCount
+        }, { merge: true });
         
         console.log(`[${APP_VERSION}] Firestore metadata updated`);
         
         currentModelId = selectedModelId;
-        errorElement.textContent = `✅ Model saved! (${sizeMB} MB)`;
+        errorElement.textContent = `✅ Model saved! (${sizeMB} MB, ${chunksCount} chunks)`;
         setTimeout(() => { errorElement.textContent = ''; }, 3000);
         
         // Reload catalog to get updated metadata
@@ -476,7 +566,7 @@ async function saveModelToFirebase() {
     }
 }
 
-// v11: Load model from Firebase Storage
+// v12: Load model from Firestore chunks (replaces Firebase Storage)
 async function loadModelFromFirebase() {
     try {
         const selectedModelId = modelSelect.value;
@@ -496,22 +586,13 @@ async function loadModelFromFirebase() {
         }
         
         const modelMeta = modelDoc.data();
-        const storagePath = modelMeta.storagePath || `models/${selectedModelId}/dataset.json`;
         
-        console.log(`[${APP_VERSION}] Loading model from ${storagePath}`);
+        console.log(`[${APP_VERSION}] Loading model from Firestore chunks: ${selectedModelId}`);
         
-        // Download from Storage
-        const storageRef = storage.ref(storagePath);
-        const downloadURL = await storageRef.getDownloadURL();
+        // v12: Load from Firestore chunks instead of Storage
+        const modelData = await loadModelFromFirestoreChunks(selectedModelId);
         
-        const response = await fetch(downloadURL);
-        if (!response.ok) {
-            throw new Error(`HTTP ${response.status}: ${response.statusText}`);
-        }
-        
-        const modelData = await response.json();
-        
-        console.log(`[${APP_VERSION}] Model data downloaded, format: ${modelData.format}`);
+        console.log(`[${APP_VERSION}] Model data loaded, format: ${modelData.format}`);
         
         // Clear existing classifier
         if (classifier) {
@@ -574,8 +655,13 @@ async function loadModelFromFirebase() {
     }
 }
 
-// v11: Export model as JSON download
+// v12: Export model as JSON download (admin only)
 function exportModel() {
+    if (!isAdminMode) {
+        alert('Admin access required to export models');
+        return;
+    }
+    
     try {
         const numClasses = classifier.getNumClasses();
         
@@ -664,7 +750,7 @@ async function renameModel() {
     }
 }
 
-// v11: Delete model (admin only)
+// v12: Delete model (admin only)
 async function deleteModel() {
     if (!isAdminMode) {
         alert('Admin access required');
@@ -679,7 +765,7 @@ async function deleteModel() {
     
     const modelName = modelCatalog.find(m => m.id === selectedModelId)?.name || selectedModelId;
     
-    if (!confirm(`Delete model "${modelName}"? This will remove the model from Storage and Firestore.`)) {
+    if (!confirm(`Delete model "${modelName}"? This will remove the model from Firestore.`)) {
         return;
     }
     
@@ -687,17 +773,22 @@ async function deleteModel() {
         deleteModelBtn.disabled = true;
         deleteModelBtn.textContent = '🗑️ Deleting...';
         
-        // Delete from Storage
-        const storagePath = `models/${selectedModelId}/dataset.json`;
-        const storageRef = storage.ref(storagePath);
+        // v12: Delete chunks from Firestore
+        const chunksSnapshot = await db.collection('modelDatasets')
+            .doc(selectedModelId)
+            .collection('chunks')
+            .get();
         
-        try {
-            await storageRef.delete();
-            console.log(`[${APP_VERSION}] Deleted from Storage: ${storagePath}`);
-        } catch (storageError) {
-            // File might not exist, continue anyway
-            console.warn(`[${APP_VERSION}] Storage delete warning:`, storageError);
-        }
+        const deleteBatch = db.batch();
+        chunksSnapshot.docs.forEach(doc => {
+            deleteBatch.delete(doc.ref);
+        });
+        
+        // Delete dataset metadata
+        deleteBatch.delete(db.collection('modelDatasets').doc(selectedModelId));
+        
+        await deleteBatch.commit();
+        console.log(`[${APP_VERSION}] Deleted ${chunksSnapshot.size} chunks from Firestore`);
         
         // Delete from Firestore
         await db.collection('models').doc(selectedModelId).delete();
@@ -772,6 +863,22 @@ async function init() {
         
         // v11: Load model catalog from Firestore
         await loadModelCatalog();
+        
+        // v12: Auto-load default model in public mode
+        if (!isAdminMode && modelCatalog.length > 0) {
+            const defaultModel = modelCatalog.find(m => m.id === DEFAULT_MODEL_ID);
+            if (defaultModel) {
+                console.log(`[${APP_VERSION}] Auto-loading default model: ${DEFAULT_MODEL_ID}`);
+                try {
+                    modelSelect.value = DEFAULT_MODEL_ID;
+                    await loadModelFromFirebase();
+                    console.log(`[${APP_VERSION}] Default model loaded successfully`);
+                } catch (error) {
+                    console.error(`[${APP_VERSION}] Failed to auto-load default model:`, error);
+                    errorElement.textContent = 'Could not load default model. Recognition may not work.';
+                }
+            }
+        }
         
         errorElement.textContent = '';
         console.log(`🚗 My Car Detector ${APP_VERSION} loaded`);
@@ -960,6 +1067,13 @@ function addClassPrompt() {
 }
 
 function deleteClass(className) {
+    // v12: Block in public mode
+    if (!isAdminMode) {
+        alert('Admin access required');
+        console.log(`[${APP_VERSION}] Delete class blocked: admin access required`);
+        return;
+    }
+    
     if (confirm(`Удалить класс "${className}"?`)) {
         delete classes[className];
         
@@ -1262,6 +1376,14 @@ function stopCapture() {
 
 // Recognition
 async function startRecognition() {
+    // v12: Fix NPE - check if classifier exists
+    if (!classifier) {
+        resultOverlay.textContent = 'Модель не инициализирована';
+        resultOverlay.className = 'result-overlay no-model';
+        recognitionStatus.textContent = 'Сначала загрузи или обучи модель';
+        return;
+    }
+    
     const numClasses = classifier.getNumClasses();
     
     if (numClasses < 2) {

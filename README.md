@@ -4,35 +4,31 @@ A real-time object detection web app using TensorFlow.js with KNN classifier and
 
 ## v12 Features
 
-### Hard Public/Admin Split (NEW in v12)
+### Firestore Chunked Storage (NEW in v12)
+- **No Firebase Storage required**: Works on Spark (free) plan
+- **Chunked storage**: Model datasets split into 700KB chunks, stored in Firestore
+- **Public read access**: Anyone can load default model and use recognition
+- **Admin write access**: Only admins can save/update models
+
+### Hard Public/Admin Split
 - **Public mode (default)**: Recognition only - no login required
   - ✅ Can use recognition to identify objects
+  - ✅ Auto-loads default model (`model-1`) if available
   - ❌ Cannot see model catalog or management controls
   - ❌ Cannot access training mode
   - ❌ Cannot add classes or capture frames
-  - ❌ Cannot save, rename, or delete models
+  - ❌ Cannot save, rename, delete, or export models
 - **Admin mode (after login)**: Full functionality
   - ✅ Training mode with class management
   - ✅ Model catalog access
   - ✅ Save/rename/delete models
+  - ✅ Export models as JSON
   - ✅ Autosave enabled
 
-### Improved Admin Authentication (NEW in v12)
+### Improved Admin Authentication
 - **User-friendly error messages**: Clear Russian messages for common Firebase auth errors
 - **Diagnostics**: Firebase project configuration displayed in login modal
 - **Better logging**: Error codes logged for troubleshooting
-
-### Public Model Catalog
-- **Public mode by default**: No login required to use existing models
-- **Firebase Storage**: Models stored in the cloud, not limited by localStorage
-- **Model catalog**: Browse and load pre-trained models
-- **Export capability**: Download models as JSON files
-
-### Admin Mode
-- **Secure authentication**: Firebase Email/Password login
-- **Role-based access**: Only verified admins can save, rename, and delete models
-- **Autosave**: Automatically saves changes after 2 seconds of inactivity
-- **Model management**: Create, rename, and delete models
 
 ### Smart Detection
 - **"Не распознано" (Unknown)**: Shows when confidence is below 70%
@@ -97,8 +93,20 @@ service cloud.firestore {
     
     // Models collection: public read, admin write
     match /models/{modelId} {
-      allow read: if true;  // Public can read
+      allow read: if true;  // Public can read metadata
       allow create, update, delete: if isAdmin();
+    }
+    
+    // Model datasets collection: public read, admin write
+    match /modelDatasets/{modelId} {
+      allow read: if true;  // Public can read dataset metadata
+      allow write: if isAdmin();
+      
+      // Chunks subcollection: public read, admin write
+      match /chunks/{chunkId} {
+        allow read: if true;  // Public can read chunks to load models
+        allow write: if isAdmin();
+      }
     }
     
     // Admins collection: no client writes allowed
@@ -110,29 +118,9 @@ service cloud.firestore {
 }
 ```
 
-### Step 5: Set Firebase Storage Security Rules
+> **Note**: Firebase Storage is no longer required in v12. All model data is stored in Firestore using chunked storage, which works on the free Spark plan.
 
-```javascript
-rules_version = '2';
-service firebase.storage {
-  match /b/{bucket}/o {
-    // Helper function to check if user is admin
-    function isAdmin() {
-      return request.auth != null && 
-             firestore.exists(/databases/(default)/documents/admins/$(request.auth.uid)) &&
-             firestore.get(/databases/(default)/documents/admins/$(request.auth.uid)).data.enabled == true;
-    }
-    
-    // Models storage: public read, admin write
-    match /models/{modelId}/{allPaths=**} {
-      allow read: if true;  // Public can read/download
-      allow write: if isAdmin();
-    }
-  }
-}
-```
-
-### Step 6: Verify Security Rules
+### Step 5: Verify Security Rules
 
 **IMPORTANT**: UI hiding is not security. Real protection is enforced by Firebase Security Rules.
 
@@ -153,42 +141,43 @@ service firebase.storage {
    - Training and model management UI should appear
    - Try saving a model - should succeed
 
-4. **Test Storage rules**:
-   - In Incognito mode, you can still download/load models (public read)
-   - Attempting to upload would fail (admin write only)
+4. **Test Firestore rules**:
+   - In Incognito mode, you can still load models (public read on chunks)
+   - Attempting to write would fail (admin write only)
 
 #### Error handling in app:
 - Non-admin attempts at admin actions show "Admin access required"
 - Firebase permission-denied errors show clear messages
 - All admin actions are blocked in public mode via UI and code checks
 
-### Step 7: Initialize Default Models (Optional)
+### Step 6: Initialize Default Models (Optional)
 
 After logging in as admin:
 1. Click "🔐 Admin" button
 2. Click "Initialize Default Models" button
 3. This creates 10 empty model entries (model-1 through model-10)
+4. Train `model-1` first so public users can auto-load it
 
 ## Usage
 
 ### Public Mode (No Login)
-1. Open the app
-2. Select a model from the dropdown
-3. Click "📂 Load Model"
-4. Add classes and train
-5. Switch to Recognition mode to test
-6. Click "💾 Export" to download your model
+1. Open the app - default model (`model-1`) auto-loads if available
+2. Switch to Recognition mode to test
+3. Point camera at objects to recognize them
+4. **No training, export, or management features available**
 
 ### Admin Mode
 1. Click "🔐 Admin" button
 2. Enter your admin email and password
 3. After login, you can:
-   - Save models to Firebase with "💾 Save to Server"
+   - Access Training mode
+   - Save models to Firestore chunks with "💾 Save to Server"
    - Rename models with "✏️ Rename"
    - Delete models with "🗑️ Delete"
+   - Export models with "💾 Export"
    - Autosave is enabled (saves 2 seconds after last change)
 
-### Training a Model
+### Training a Model (Admin Only)
 1. Click "➕ Add New Class" to create categories
 2. Select a class from the radio buttons
 3. Hold "📸 Take Photo" button to capture multiple examples
@@ -209,23 +198,49 @@ After logging in as admin:
 ```javascript
 {
   name: "Model Name",              // Display name (editable)
-  storagePath: "models/{id}/dataset.json",
-  format: "knn-mobilenet-v1",
-  updatedAt: Timestamp,
-  sizeBytes: 1234567,
-  classesCount: 5,
-  examplesCount: 150,
-  appVersion: "v11"
+  format: "knn-mobilenet-v1",      // Model format
+  updatedAt: Timestamp,            // Last update
+  sizeBytes: 1234567,              // Total size of JSON
+  classesCount: 5,                 // Number of classes
+  examplesCount: 150,              // Total examples
+  appVersion: "v12",               // App version
+  datasetVersion: 2,               // Increments on each save
+  chunksCount: 3,                  // Number of chunks
+  default: true                    // (Optional) Default model flag
 }
 ```
 
-#### Storage `models/{modelId}/dataset.json`
+#### Firestore `modelDatasets/{modelId}` Document
+```javascript
+{
+  datasetVersion: 2,               // Matches model datasetVersion
+  updatedAt: Timestamp             // Last update
+}
+```
+
+#### Firestore `modelDatasets/{modelId}/chunks/{chunkId}` Subcollection
+```javascript
+{
+  v: 2,                            // datasetVersion
+  i: 0,                            // Chunk index (0, 1, 2, ...)
+  data: "base64EncodedChunk...",   // Base64-encoded JSON chunk
+  bytes: 700000                    // Size in bytes
+}
+```
+
+### Chunking Strategy
+- Model JSON is serialized to a string
+- String is split into chunks of ≤700KB (to stay under 1MB Firestore limit)
+- Each chunk is base64-encoded and stored as a document
+- On load: chunks are fetched in order, concatenated, decoded, and parsed
+
+### Original Model Dataset Format
 ```javascript
 {
   format: "knn-mobilenet-v1",
   createdAt: "2024-01-01T00:00:00.000Z",
   updatedAt: "2024-01-01T00:00:00.000Z",
-  appVersion: "v11",
+  appVersion: "v12",
   classes: {
     "className": {
       examples: 30
@@ -240,11 +255,13 @@ After logging in as admin:
 }
 ```
 
+This JSON is what gets chunked and stored in Firestore.
+
 ### Security Model
-- **Public users**: Can read models and use the app, no authentication required
+- **Public users**: Can load and use models (read-only), no authentication required
 - **Admin users**: Must login with Firebase Auth, verified via `admins/{uid}` document
-- **Storage**: Public read, admin write (enforced by Firebase Storage rules)
-- **Firestore**: Public read, admin write (enforced by Firestore rules)
+- **Firestore**: Public read for models and chunks, admin write (enforced by Firestore rules)
+- **No Firebase Storage required**: Works on Spark (free) plan
 - **No secrets in frontend**: Admin verification happens server-side via Firebase rules
 
 ## iOS Safari Compatibility
@@ -265,7 +282,7 @@ This app includes extensive fixes for iOS Safari:
 - `README.md` - This file
 
 ### Version History
-- **v12**: Hard Public/Admin split + improved auth error handling + security enforcement
+- **v12**: Firestore chunked storage (no Storage required) + strict Public/Admin split + auto-load default model + auth diagnostics
 - **v11**: Firebase public catalog + admin mode + "Не распознано"
 - **v10**: Enhanced iOS Safari compatibility with video isolation
 - **v9**: Visual feedback and improved mobile UX
@@ -280,8 +297,8 @@ This app includes extensive fixes for iOS Safari:
 
 ### Model won't load
 - Check browser console for errors
-- Verify model exists in Firestore and Storage
-- Check Firebase Storage rules allow public read access
+- Verify model exists in Firestore (both metadata and chunks)
+- Check Firestore rules allow public read access to chunks
 - Try refreshing the page
 
 ### Camera not working
