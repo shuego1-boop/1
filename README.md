@@ -6,7 +6,7 @@ A real-time object detection web app using TensorFlow.js with KNN classifier and
 
 ### Firestore Chunked Storage (NEW in v12)
 - **No Firebase Storage required**: Works on Spark (free) plan
-- **Chunked storage**: Model datasets split into 700KB chunks, stored in Firestore
+- **Chunked storage**: Model datasets split into 500KB chunks (before encoding), stored in Firestore
 - **Public read access**: Anyone can load default model and use recognition
 - **Admin write access**: Only admins can save/update models
 
@@ -224,15 +224,16 @@ After logging in as admin:
   v: 2,                            // datasetVersion
   i: 0,                            // Chunk index (0, 1, 2, ...)
   data: "base64EncodedChunk...",   // Base64-encoded JSON chunk
-  bytes: 700000                    // Size in bytes
+  bytes: 667000                    // Size in bytes (example)
 }
 ```
 
 ### Chunking Strategy
 - Model JSON is serialized to a string
-- String is split into chunks of ≤700KB (to stay under 1MB Firestore limit)
-- Each chunk is base64-encoded and stored as a document
-- On load: chunks are fetched in order, concatenated, decoded, and parsed
+- String is split into chunks of 500KB before encoding
+- Each chunk is encoded to UTF-8 using TextEncoder, then base64-encoded
+- After encoding, chunks are ~667KB (4/3 size increase), staying safely under 1MB Firestore limit
+- On load: chunks are fetched in order by index, decoded from base64, decoded from UTF-8, concatenated, and parsed
 
 ### Original Model Dataset Format
 ```javascript
