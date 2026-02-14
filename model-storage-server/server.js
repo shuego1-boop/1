@@ -7,11 +7,19 @@ require('dotenv').config();
 
 const app = express();
 const PORT = process.env.PORT || 3000;
-const API_KEY = process.env.API_KEY || 'change-me-in-production';
+const API_KEY = process.env.API_KEY;
 const DATA_DIR = process.env.DATA_DIR || './data';
 const ALLOWED_ORIGINS = process.env.ALLOWED_ORIGINS 
   ? process.env.ALLOWED_ORIGINS.split(',').map(o => o.trim())
   : ['https://shuego1-boop.github.io', 'http://localhost:8080', 'http://127.0.0.1:8080'];
+
+// Validate API_KEY is set
+if (!API_KEY) {
+  console.error('[CRITICAL] API_KEY environment variable is not set!');
+  console.error('[CRITICAL] Server will not accept uploads or deletes without an API key.');
+  console.error('[CRITICAL] Please set API_KEY in .env file or environment variables.');
+  process.exit(1);
+}
 
 // Ensure data directory exists
 (async () => {
@@ -183,9 +191,19 @@ app.get('/api/models/:modelId', async (req, res) => {
       res.setHeader('Content-Length', metadata.sizeBytes);
     }
     
-    // Stream the file
-    const fileContent = await fs.readFile(filePath);
-    res.send(fileContent);
+    // Stream the file for better memory efficiency
+    const fileStream = require('fs').createReadStream(filePath);
+    fileStream.pipe(res);
+    
+    fileStream.on('error', (error) => {
+      console.error('[Download] Stream error:', error);
+      if (!res.headersSent) {
+        res.status(500).json({ 
+          error: 'Download failed',
+          message: error.message 
+        });
+      }
+    });
     
   } catch (error) {
     console.error('[Download] Error:', error);

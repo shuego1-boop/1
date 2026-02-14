@@ -1,7 +1,7 @@
-# Replace YOUR_DOMAIN.com with your actual domain
+# Replace example.com with your actual domain
 # For automatic HTTPS, point your domain to this server's IP
 
-YOUR_DOMAIN.com {
+example.com {
     # Reverse proxy to API server
     reverse_proxy api:3000
 
@@ -33,6 +33,6 @@ YOUR_DOMAIN.com {
 }
 
 # Optional: Add a www subdomain redirect
-www.YOUR_DOMAIN.com {
-    redir https://YOUR_DOMAIN.com{uri} permanent
+www.example.com {
+    redir https://example.com{uri} permanent
 }

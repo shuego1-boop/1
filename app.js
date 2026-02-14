@@ -38,8 +38,8 @@ const CHUNK_SIZE = 500 * 1024; // v12: 500KB chunks before encoding (~667KB afte
 // v16: External model storage configuration
 // WARNING: API key is visible in client-side code. This is NOT strong security.
 // For production, consider Firebase token verification or OAuth 2.0.
-const EXTERNAL_MODEL_STORE_BASE_URL = ''; // Set to your server URL (e.g., 'https://models.example.com')
-const EXTERNAL_MODEL_STORE_API_KEY = ''; // Set to your API key from server .env
+const EXTERNAL_MODEL_STORE_BASE_URL = null; // Set to your server URL (e.g., 'https://models.example.com')
+const EXTERNAL_MODEL_STORE_API_KEY = null; // Set to your API key from server .env
 const EXTERNAL_STORAGE_THRESHOLD = 800 * 1024; // 800KB - models larger than this use external storage
 const USE_EXTERNAL_STORAGE = false; // Set to true to force external storage for all models (ignores threshold)
 
@@ -471,10 +471,16 @@ function uint8ArrayToBase64(bytes) {
 // v16: External storage helper - check if model should use external storage
 function shouldUseExternalStorage(modelSizeBytes) {
     if (!EXTERNAL_MODEL_STORE_BASE_URL || !EXTERNAL_MODEL_STORE_API_KEY) {
+        // Not configured - log warning if threshold is exceeded
+        if (modelSizeBytes > EXTERNAL_STORAGE_THRESHOLD) {
+            console.warn(`[${APP_VERSION}] Model size (${(modelSizeBytes / 1024).toFixed(2)} KB) exceeds threshold, but external storage is not configured. Using Firestore chunks instead.`);
+            console.warn(`[${APP_VERSION}] To enable external storage, set EXTERNAL_MODEL_STORE_BASE_URL and EXTERNAL_MODEL_STORE_API_KEY in app.js`);
+        }
         return false; // Not configured
     }
     
     if (USE_EXTERNAL_STORAGE) {
+        console.log(`[${APP_VERSION}] External storage forced (USE_EXTERNAL_STORAGE = true)`);
         return true; // Forced external storage
     }
     
@@ -517,7 +523,7 @@ async function compressData(jsonString) {
         return result;
     } else {
         // Fallback: use pako library if CompressionStream not available
-        throw new Error('Compression not supported in this browser. CompressionStream API required.');
+        throw new Error('Compression not supported in this browser. CompressionStream API required (Chrome 80+, Safari 16.4+, Firefox 113+). Please update your browser or use a modern browser.');
     }
 }
 
@@ -554,7 +560,7 @@ async function decompressData(compressedData) {
         const decoder = new TextDecoder();
         return decoder.decode(result);
     } else {
-        throw new Error('Decompression not supported in this browser. DecompressionStream API required.');
+        throw new Error('Decompression not supported in this browser. DecompressionStream API required (Chrome 80+, Safari 16.4+, Firefox 113+). Please update your browser or use a modern browser.');
     }
 }
 
