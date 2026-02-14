@@ -253,13 +253,26 @@ function deleteClass(className) {
 }
 
 // Render classes
+let renderClassesRetryCount = 0;
+const MAX_RENDER_RETRIES = 10; // Prevent infinite recursion
+
 function renderClasses() {
     // NEVER render during capture on iOS
     if (!isDOMManipulationSafe && IS_IOS) {
-        console.warn('[SKIP] Postponing renderClasses until capture stops');
-        setTimeout(renderClasses, 500);
-        return;
+        renderClassesRetryCount++;
+        if (renderClassesRetryCount > MAX_RENDER_RETRIES) {
+            console.error('[SKIP] Max retries reached, forcing render');
+            renderClassesRetryCount = 0;
+            // Force render anyway to prevent UI deadlock
+        } else {
+            console.warn(`[SKIP] Postponing renderClasses until capture stops (retry ${renderClassesRetryCount}/${MAX_RENDER_RETRIES})`);
+            setTimeout(renderClasses, 500);
+            return;
+        }
     }
+    
+    // Reset retry counter on successful render
+    renderClassesRetryCount = 0;
     
     // iOS Safari: check if stream is still active or disconnected from video element
     if (stream && videoElement && (!stream.active || videoElement.srcObject !== stream)) {
@@ -795,8 +808,11 @@ if (restartCameraBtn) {
 
 // Show restart button on video/stream errors
 window.addEventListener('error', (e) => {
-    if (restartCameraBtn && (e.message.includes('video') || e.message.includes('stream'))) {
-        restartCameraBtn.style.display = 'block';
+    if (restartCameraBtn) {
+        const errorMessage = e.message || (e.error && e.error.message) || '';
+        if (errorMessage.toLowerCase().includes('video') || errorMessage.toLowerCase().includes('stream')) {
+            restartCameraBtn.style.display = 'block';
+        }
     }
 });
 
