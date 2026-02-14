@@ -698,7 +698,7 @@ async function predict() {
             img = tf.browser.fromPixels(videoElement);
             activation = mobilenetModel.infer(img, true);
             
-            const prediction = await classifier.predictClass(activation, 3);
+            const prediction = await classifier.predictClass(activation, 3); // Get top 3 predictions
             
             const predictedClass = prediction.label;
             const confidence = prediction.confidences[predictedClass];
@@ -709,7 +709,7 @@ async function predict() {
                 // UNKNOWN OBJECT
                 resultOverlay.textContent = `❓ Unknown (${confidencePercent}%)`;
                 resultOverlay.className = 'result-overlay unknown';
-                recognitionStatus.textContent = `Unknown Object - Confidence: ${confidencePercent}% (< 70% threshold)`;
+                recognitionStatus.textContent = `Unknown Object - Confidence: ${confidencePercent}% (< ${(CONFIDENCE_THRESHOLD * 100).toFixed(0)}% threshold)`;
             } else {
                 // KNOWN OBJECT - show prediction
                 resultOverlay.textContent = `${predictedClass} (${confidencePercent}%)`;
@@ -829,20 +829,20 @@ async function loadModelFromStorage() {
         classes = loadedClasses;
         
         // Restore classifier dataset
+        const restoredDataset = {};
         for (const className in dataset) {
             const data = dataset[className];
             const tensor = tf.tensor(data.data, data.shape);
-            
-            classifier.setClassifierDataset({
-                ...classifier.getClassifierDataset(),
-                [className]: tensor
-            });
+            restoredDataset[className] = tensor;
             
             // Update example count
             if (classes[className]) {
                 classes[className].examples = data.shape[0];
             }
         }
+        
+        // Set the complete dataset at once
+        classifier.setClassifierDataset(restoredDataset);
         
         renderClasses();
         console.log('[v11] ✅ Model loaded from IndexedDB');
