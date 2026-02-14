@@ -1,5 +1,6 @@
 const express = require('express');
 const cors = require('cors');
+const rateLimit = require('express-rate-limit');
 const fs = require('fs').promises;
 const path = require('path');
 const morgan = require('morgan');
@@ -53,6 +54,33 @@ const corsOptions = {
 app.use(cors(corsOptions));
 app.use(morgan('combined'));
 
+// Rate limiting for API endpoints
+const apiLimiter = rateLimit({
+  windowMs: 15 * 60 * 1000, // 15 minutes
+  max: 100, // Limit each IP to 100 requests per windowMs
+  standardHeaders: true,
+  legacyHeaders: false,
+  message: {
+    error: 'Too many requests',
+    message: 'Rate limit exceeded. Please try again later.'
+  }
+});
+
+// Stricter rate limiting for upload/delete operations
+const writeLimiter = rateLimit({
+  windowMs: 15 * 60 * 1000, // 15 minutes
+  max: 20, // Limit each IP to 20 write requests per windowMs
+  standardHeaders: true,
+  legacyHeaders: false,
+  message: {
+    error: 'Too many requests',
+    message: 'Rate limit exceeded for write operations. Please try again later.'
+  }
+});
+
+// Apply rate limiting to all API routes
+app.use('/api/', apiLimiter);
+
 // Middleware to verify API key for protected routes
 const requireApiKey = (req, res, next) => {
   const apiKey = req.headers['x-api-key'];
@@ -86,7 +114,7 @@ app.get('/health', (req, res) => {
 
 // Upload model artifact
 // Expects: gzipped binary data (application/octet-stream)
-app.post('/api/models/:modelId', requireApiKey, express.raw({ 
+app.post('/api/models/:modelId', writeLimiter, requireApiKey, express.raw({ 
   type: 'application/octet-stream',
   limit: '50mb' // Adjust based on your needs
 }), async (req, res) => {
@@ -215,7 +243,7 @@ app.get('/api/models/:modelId', async (req, res) => {
 });
 
 // Delete model artifact
-app.delete('/api/models/:modelId', requireApiKey, async (req, res) => {
+app.delete('/api/models/:modelId', writeLimiter, requireApiKey, async (req, res) => {
   try {
     const { modelId } = req.params;
     

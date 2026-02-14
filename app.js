@@ -617,7 +617,7 @@ async function uploadModelToExternalServer(modelId, modelJson) {
     console.log(`[${APP_VERSION}] External upload successful:`, result);
     
     return {
-        artifactUrl: url.replace('/api/models/', '/api/models/').replace('POST', 'GET'),
+        artifactUrl: url, // URL is already correct for GET requests
         artifactSizeBytes: compressedData.length,
         artifactContentEncoding: 'gzip',
         originalSizeBytes: sizeBytes
