@@ -65,14 +65,6 @@
     <script src="https://cdn.jsdelivr.net/npm/@tensorflow/tfjs@latest/dist/tf.min.js"></script>
     <script src="https://cdn.jsdelivr.net/npm/@tensorflow-models/mobilenet@latest/dist/mobilenet.min.js"></script>
     <script src="https://cdn.jsdelivr.net/npm/@tensorflow-models/knn-classifier@latest/dist/knn-classifier.min.js"></script>
-    <script>
-        // Check if libraries loaded
-        window.addEventListener('DOMContentLoaded', function() {
-            if (typeof tf === 'undefined') {
-                document.getElementById('error').textContent = 'Не удалось загрузить TensorFlow.js. Проверьте подключение к интернету и отключите блокировщики рекламы.';
-            }
-        });
-    </script>
     <script src="app.js?v=7"></script>
 </body>
 </html>
