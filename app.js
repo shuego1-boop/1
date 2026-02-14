@@ -15,6 +15,7 @@ let modeSwitchTimeout = null;
 const STORAGE_KEY = 'myCarDetectorModel';
 const CONFIDENCE_THRESHOLD = 0.80;
 const APP_VERSION = 'v7';
+const IS_IOS = /iPhone|iPad|iPod/.test(navigator.userAgent);
 
 // UI Elements
 const trainingTab = document.getElementById('training-tab');
@@ -233,8 +234,8 @@ function deleteClass(className) {
 
 // Render classes
 function renderClasses() {
-    // iOS Safari: check if stream is still active
-    if (stream && !stream.active && videoElement) {
+    // iOS Safari: check if stream is still active and connected to video element
+    if (stream && !stream.active && videoElement && videoElement.srcObject === stream) {
         console.log('[MOBILE FIX] Stream lost, reinitializing camera...');
         initCamera().catch(err => {
             console.error('[MOBILE FIX] Failed to reinit camera:', err);
@@ -289,10 +290,24 @@ function renderClasses() {
     });
     
     // Remove ALL old listeners by cloning buttons (prevents accumulation on mobile)
+    // Preserve focus state for keyboard accessibility
+    const focusedElement = document.activeElement;
+    const focusedClass = focusedElement && focusedElement.classList.contains('capture-btn') 
+        ? focusedElement.dataset.class 
+        : null;
+    
     document.querySelectorAll('.capture-btn').forEach(btn => {
         const newBtn = btn.cloneNode(true);
         btn.parentNode.replaceChild(newBtn, btn);
     });
+    
+    // Restore focus if a capture button was focused
+    if (focusedClass) {
+        const btnToFocus = document.querySelector(`.capture-btn[data-class="${focusedClass}"]`);
+        if (btnToFocus) {
+            btnToFocus.focus();
+        }
+    }
     
     // Add event listeners to fresh buttons
     document.querySelectorAll('.capture-btn').forEach(btn => {
@@ -329,14 +344,11 @@ let captureDebounceTimer = null;
 let currentCapturingClass = null;
 
 async function startCapture(className) {
-    // Debounce for mobile touch events
+    // Debounce for mobile touch events - set timer BEFORE processing
     if (captureDebounceTimer) {
         console.log('[MOBILE FIX] Capture debounced');
         return;
     }
-    captureDebounceTimer = setTimeout(() => {
-        captureDebounceTimer = null;
-    }, 150); // 150ms protection from double tap
     
     if (!className || !classes[className]) {
         console.error('Invalid class name for capture:', className);
@@ -348,17 +360,21 @@ async function startCapture(className) {
         return;
     }
     
+    // Prevent multiple simultaneous captures
     if (isCapturing && currentCapturingClass !== className) {
         // Already capturing a different class, stop the previous one
         console.log(`[MOBILE FIX] Stopping previous capture of ${currentCapturingClass}`);
         stopCapture();
-    }
-    
-    if (isCapturing && currentCapturingClass === className) {
+    } else if (isCapturing && currentCapturingClass === className) {
         // Already capturing THIS class, ignore
         console.log('[MOBILE FIX] Already capturing this class, ignoring');
         return;
     }
+    
+    // Set debounce timer after all checks pass
+    captureDebounceTimer = setTimeout(() => {
+        captureDebounceTimer = null;
+    }, 150); // 150ms protection from double tap
     
     isCapturing = true;
     currentCapturingClass = className;
@@ -379,7 +395,7 @@ async function startCapture(className) {
             // Check video is ready - ensure it has actual pixel data
             if (!videoElement.videoWidth || !videoElement.videoHeight || videoElement.readyState < 2) {
                 // iOS needs more time for video to be ready
-                const retryDelay = /iPhone|iPad|iPod/.test(navigator.userAgent) ? 400 : 200;
+                const retryDelay = IS_IOS ? 400 : 200;
                 captureInterval = setTimeout(captureFrame, retryDelay);
                 return;
             }
