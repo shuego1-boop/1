@@ -17,6 +17,7 @@ let selectedClass = null; // Currently selected class for capture
 const STORAGE_KEY = 'myCarDetectorModel';
 const DATASET_STORAGE_KEY = 'carDetectorDataset';
 const CONFIDENCE_THRESHOLD = 0.7; // 70% threshold for unknown detection (v11)
+const HIGH_CONFIDENCE_THRESHOLD = 0.9; // 90% threshold for high confidence display (v11)
 const APP_VERSION = 'v11';
 const IS_IOS = /iPhone|iPad|iPod/.test(navigator.userAgent);
 const IOS_VIDEO_READY_DELAY = 400; // iOS needs more time for video initialization
@@ -714,7 +715,7 @@ async function predict() {
                 // KNOWN OBJECT - show prediction
                 resultOverlay.textContent = `${predictedClass} (${confidencePercent}%)`;
                 
-                if (confidence >= 0.9) {
+                if (confidence >= HIGH_CONFIDENCE_THRESHOLD) {
                     resultOverlay.className = 'result-overlay high-confidence';
                 } else {
                     resultOverlay.className = 'result-overlay medium-confidence';
@@ -841,7 +842,7 @@ async function loadModelFromStorage() {
             }
         }
         
-        // Set the complete dataset at once
+        // Set the complete dataset at once (avoids multiple object spreads and tensor operations)
         classifier.setClassifierDataset(restoredDataset);
         
         renderClasses();
