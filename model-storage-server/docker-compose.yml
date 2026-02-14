@@ -1,0 +1,41 @@
+version: '3.8'
+
+services:
+  # Model storage API
+  api:
+    build: .
+    container_name: model-storage-api
+    restart: unless-stopped
+    env_file: .env
+    volumes:
+      - ./data:/app/data
+    networks:
+      - model-storage-net
+    # Only expose to internal network, Caddy will handle external access
+    expose:
+      - "3000"
+
+  # Caddy reverse proxy with automatic HTTPS
+  caddy:
+    image: caddy:2-alpine
+    container_name: model-storage-caddy
+    restart: unless-stopped
+    ports:
+      - "80:80"
+      - "443:443"
+    volumes:
+      - ./Caddyfile:/etc/caddy/Caddyfile
+      - caddy_data:/data
+      - caddy_config:/config
+    networks:
+      - model-storage-net
+    depends_on:
+      - api
+
+networks:
+  model-storage-net:
+    driver: bridge
+
+volumes:
+  caddy_data:
+  caddy_config:
