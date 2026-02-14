@@ -362,10 +362,7 @@ function attachClassEventListeners() {
             startCapture(className);
         }, { passive: false });
         btn.addEventListener('mouseup', stopCapture);
-        btn.addEventListener('touchend', (e) => {
-            e.preventDefault();
-            stopCapture();
-        }, { passive: false });
+        btn.addEventListener('touchend', stopCapture);
         btn.addEventListener('mouseleave', stopCapture);
         btn.addEventListener('touchcancel', stopCapture);
     });
@@ -380,6 +377,7 @@ let captureInterval = null;
 let isCapturing = false;
 let captureDebounceTimer = null;
 let currentCapturingClass = null;
+let flashTimeout = null;
 
 async function startCapture(className) {
     console.log('🎬 Starting capture for:', className);
@@ -471,16 +469,15 @@ async function startCapture(className) {
             
             classes[className].examples++;
             
-            // Visual flash effect
-            videoElement.style.filter = 'brightness(1.5)';
-            setTimeout(() => {
-                videoElement.style.filter = 'brightness(1)';
-            }, 100);
-            
-            // Haptic feedback for iOS
-            if (navigator.vibrate) {
-                navigator.vibrate(50);
+            // Visual flash effect (clear previous timeout to avoid stacking)
+            if (flashTimeout) {
+                clearTimeout(flashTimeout);
             }
+            videoElement.style.filter = 'brightness(1.5)';
+            flashTimeout = setTimeout(() => {
+                videoElement.style.filter = 'brightness(1)';
+                flashTimeout = null;
+            }, 100);
             
             console.log('✅ Frame captured! Total examples:', classes[className].examples);
             
