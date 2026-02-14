@@ -27,7 +27,7 @@ const STORAGE_KEY = 'myCarDetectorModel';
 const DATASET_STORAGE_KEY = 'carDetectorDataset';
 const CONFIDENCE_THRESHOLD = 0.70; // v11: Changed to 0.7 for "Не распознано"
 const HIGH_CONFIDENCE_THRESHOLD = 0.90;
-const APP_VERSION = 'v13';
+const APP_VERSION = 'v14';
 const IS_IOS = /iPhone|iPad|iPod/.test(navigator.userAgent);
 const IOS_VIDEO_READY_DELAY = 400; // iOS needs more time for video initialization
 const DEFAULT_VIDEO_READY_DELAY = 200;
@@ -79,6 +79,7 @@ const adminPanel = document.getElementById('admin-panel');
 const loginError = document.getElementById('login-error');
 const modeStatus = document.getElementById('mode-status');
 const modelSelect = document.getElementById('model-select');
+const createModelBtn = document.getElementById('create-model-btn');
 const exportModelBtn = document.getElementById('export-model-btn');
 const renameModelBtn = document.getElementById('rename-model-btn');
 const deleteModelBtn = document.getElementById('delete-model-btn');
@@ -169,8 +170,29 @@ function getSelectedModelId() {
     return selectValue !== '' ? selectValue : (currentModelId || '');
 }
 
-// v13: Helper to require selected model id (validates admin mode and selection)
-// Note: This function has a side effect of syncing currentModelId with the UI selection
+// v14: Helper for management operations (save/load/rename/delete/export)
+// Validates admin mode and model selection with Russian error message
+function requireSelectedModelIdForManagement() {
+    if (!isAdminMode) {
+        alert('Admin access required');
+        console.log(`[${APP_VERSION}] Action blocked: admin access required`);
+        return null;
+    }
+    
+    const selectedId = getSelectedModelId();
+    if (!selectedId) {
+        alert('Сначала создайте или выберите модель в каталоге.');
+        console.log(`[${APP_VERSION}] Action blocked: no model selected for management`);
+        return null;
+    }
+    
+    // Sync currentModelId with UI selection
+    currentModelId = selectedId;
+    return selectedId;
+}
+
+// v13: Helper to require selected model id (validates admin mode only)
+// v14: Kept for backward compatibility, but training operations no longer use this
 function requireSelectedModelId() {
     if (!isAdminMode) {
         alert('Admin access required');
@@ -180,7 +202,7 @@ function requireSelectedModelId() {
     
     const selectedId = getSelectedModelId();
     if (!selectedId) {
-        alert('Please select a model from the catalog');
+        alert('Сначала создайте или выберите модель в каталоге.');
         console.log(`[${APP_VERSION}] Action blocked: no model selected`);
         return null;
     }
@@ -219,6 +241,9 @@ function updateModelSelect() {
         modelSelect.value = previousSelection;
         currentModelId = previousSelection; // Sync back
     }
+    
+    // v14: Update management button states after updating select
+    updateManagementButtonStates();
 }
 
 // v12: Set mode UI - controls visibility of admin-only sections
@@ -254,10 +279,8 @@ function updateAdminUI() {
         adminPanel.style.display = 'block';
         adminEmailDisplay.textContent = currentUser.email;
         
-        // Enable admin-only buttons
-        saveModelBtn.disabled = false;
-        renameModelBtn.disabled = false;
-        deleteModelBtn.disabled = false;
+        // v14: Update management buttons based on selection
+        updateManagementButtonStates();
         
         // Show admin-only UI sections
         setModeUI(true);
@@ -274,10 +297,36 @@ function updateAdminUI() {
         saveModelBtn.disabled = true;
         renameModelBtn.disabled = true;
         deleteModelBtn.disabled = true;
+        exportModelBtn.disabled = true;
+        loadModelBtn.disabled = true;
         
         // Hide admin-only UI sections
         setModeUI(false);
     }
+}
+
+// v14: Update management button states based on model selection
+function updateManagementButtonStates() {
+    if (!isAdminMode) {
+        // All disabled in public mode
+        saveModelBtn.disabled = true;
+        renameModelBtn.disabled = true;
+        deleteModelBtn.disabled = true;
+        exportModelBtn.disabled = true;
+        loadModelBtn.disabled = true;
+        return;
+    }
+    
+    // In admin mode, enable/disable based on model selection
+    const hasSelection = getSelectedModelId() !== '';
+    
+    // Management operations require model selection
+    saveModelBtn.disabled = !hasSelection;
+    renameModelBtn.disabled = !hasSelection;
+    deleteModelBtn.disabled = !hasSelection;
+    exportModelBtn.disabled = !hasSelection;
+    loadModelBtn.disabled = !hasSelection;
+}
 }
 
 // v12: Format Firebase auth errors with user-friendly messages
@@ -525,8 +574,8 @@ async function saveModelToFirebase() {
             return;
         }
         
-        // v13: Use helper to validate and get selected model
-        const selectedModelId = requireSelectedModelId();
+        // v14: Use management helper to validate and get selected model
+        const selectedModelId = requireSelectedModelIdForManagement();
         if (!selectedModelId) {
             return;
         }
@@ -608,8 +657,8 @@ async function saveModelToFirebase() {
 // v12: Load model from Firestore chunks (replaces Firebase Storage)
 async function loadModelFromFirebase() {
     try {
-        // v13: Use helper to validate and get selected model
-        const selectedModelId = requireSelectedModelId();
+        // v14: Use management helper to validate and get selected model
+        const selectedModelId = requireSelectedModelIdForManagement();
         if (!selectedModelId) {
             return;
         }
@@ -696,8 +745,9 @@ async function loadModelFromFirebase() {
 
 // v12: Export model as JSON download (admin only)
 function exportModel() {
-    if (!isAdminMode) {
-        alert('Admin access required to export models');
+    // v14: Use management helper to validate and get selected model
+    const selectedModelId = requireSelectedModelIdForManagement();
+    if (!selectedModelId) {
         return;
     }
     
@@ -754,8 +804,8 @@ function exportModel() {
 
 // v11: Rename model (admin only)
 async function renameModel() {
-    // v13: Use helper to validate and get selected model
-    const selectedModelId = requireSelectedModelId();
+    // v14: Use management helper to validate and get selected model
+    const selectedModelId = requireSelectedModelIdForManagement();
     if (!selectedModelId) {
         return;
     }
@@ -786,8 +836,8 @@ async function renameModel() {
 
 // v12: Delete model (admin only)
 async function deleteModel() {
-    // v13: Use helper to validate and get selected model
-    const selectedModelId = requireSelectedModelId();
+    // v14: Use management helper to validate and get selected model
+    const selectedModelId = requireSelectedModelIdForManagement();
     if (!selectedModelId) {
         return;
     }
@@ -838,6 +888,73 @@ async function deleteModel() {
     } finally {
         deleteModelBtn.disabled = false;
         deleteModelBtn.textContent = '🗑️ Delete';
+    }
+}
+
+// v14: Create new model (admin only)
+async function createNewModel() {
+    if (!isAdminMode) {
+        alert('Admin access required');
+        console.log(`[${APP_VERSION}] Create model blocked: admin access required`);
+        return;
+    }
+    
+    try {
+        createModelBtn.disabled = true;
+        createModelBtn.textContent = '➕ Creating...';
+        
+        // Find next available model ID (model-1 to model-10)
+        const existingIds = modelCatalog.map(m => m.id);
+        let nextId = null;
+        
+        for (let i = 1; i <= 10; i++) {
+            const candidateId = `model-${i}`;
+            if (!existingIds.includes(candidateId)) {
+                nextId = candidateId;
+                break;
+            }
+        }
+        
+        if (!nextId) {
+            alert('Достигнут лимит 10 моделей');
+            console.log(`[${APP_VERSION}] Cannot create model: limit of 10 models reached`);
+            return;
+        }
+        
+        // Extract model number for naming
+        const modelNum = nextId.split('-')[1];
+        
+        // Create Firestore document
+        await db.collection('models').doc(nextId).set({
+            name: `Model ${modelNum}`,
+            format: 'knn-mobilenet-v1',
+            updatedAt: firebase.firestore.FieldValue.serverTimestamp(),
+            appVersion: APP_VERSION,
+            classesCount: 0,
+            examplesCount: 0,
+            chunksCount: 0,
+            datasetVersion: 0,
+            sizeBytes: 0
+        });
+        
+        console.log(`[${APP_VERSION}] Created model: ${nextId}`);
+        errorElement.textContent = `✅ Model ${modelNum} created!`;
+        setTimeout(() => { errorElement.textContent = ''; }, 2000);
+        
+        // Refresh catalog and select the new model
+        await loadModelCatalog();
+        modelSelect.value = nextId;
+        currentModelId = nextId;
+        
+        // Update button states
+        updateManagementButtonStates();
+        
+    } catch (error) {
+        console.error(`[${APP_VERSION}] Create model error:`, error);
+        alert('Error creating model: ' + error.message);
+    } finally {
+        createModelBtn.disabled = false;
+        createModelBtn.textContent = '➕ Create Model';
     }
 }
 
@@ -1234,13 +1351,7 @@ async function startCapture(className) {
         return;
     }
     
-    // v13: Require selected model in admin mode
-    if (isAdminMode) {
-        const modelId = requireSelectedModelId();
-        if (!modelId) {
-            return;
-        }
-    }
+    // v14: No model selection required for training operations
     
     // Verify video element (removed readyState check for iOS compatibility)
     if (!videoElement) {
@@ -1724,15 +1835,17 @@ function setupEventListeners() {
     renameModelBtn.addEventListener('click', renameModel);
     deleteModelBtn.addEventListener('click', deleteModel);
     clearModelBtn.addEventListener('click', clearModel);
+    createModelBtn.addEventListener('click', createNewModel);
     
-    // v13: Sync currentModelId when select changes
-    // Note: Only sync when the value actually changes to avoid loops with updateModelSelect()
+    // v14: Sync currentModelId when select changes and update button states
     modelSelect.addEventListener('change', () => {
         const newValue = modelSelect.value;
         if (newValue && newValue !== currentModelId) {
             currentModelId = newValue;
             console.log(`[${APP_VERSION}] Model selection changed to: ${currentModelId}`);
         }
+        // Update management button states based on new selection
+        updateManagementButtonStates();
     });
     
     // Camera controls
