@@ -1,0 +1,78 @@
+<!DOCTYPE html>
+<html lang="ru">
+<head>
+    <meta charset="UTF-8">
+    <meta name="viewport" content="width=device-width, initial-scale=1.0">
+    <meta http-equiv="Cache-Control" content="no-cache, no-store, must-revalidate">
+    <meta http-equiv="Pragma" content="no-cache">
+    <meta http-equiv="Expires" content="0">
+    <title>🚗 My Car Detector</title>
+    <link rel="stylesheet" href="style.css?v=7">
+</head>
+<body>
+    <div class="container">
+        <h1>🚗 My Car Detector <span style="font-size: 14px; color: #8b949e;">v7</span></h1>
+        
+        <!-- Mode Tabs -->
+        <div class="mode-tabs">
+            <button id="training-tab" class="tab-btn active">🎓 Обучение</button>
+            <button id="recognition-tab" class="tab-btn">🎯 Распознавание</button>
+        </div>
+
+        <!-- Camera Preview -->
+        <div class="camera-wrapper">
+            <video id="webcam" autoplay playsinline></video>
+            <div id="result-overlay" class="result-overlay"></div>
+        </div>
+
+        <!-- Training Mode -->
+        <div id="training-mode" class="mode-content active">
+            <div class="hint">
+                💡 Рекомендуется 15-20 примеров на класс
+            </div>
+            
+            <button id="add-class-btn" class="primary-btn">➕ Добавить класс</button>
+            
+            <div id="classes-container" class="classes-container"></div>
+            
+            <div class="training-hint">💡 Совет: добавьте минимум 2 класса и 20+ примеров в каждый для точного распознавания</div>
+        </div>
+
+        <!-- Recognition Mode -->
+        <div id="recognition-mode" class="mode-content">
+            <div id="recognition-status" class="recognition-status">
+                Сначала обучи модель!
+            </div>
+        </div>
+
+        <!-- Model Management -->
+        <div class="model-controls">
+            <button id="save-model-btn" class="control-btn">💾 Сохранить модель</button>
+            <button id="load-model-btn" class="control-btn">📂 Загрузить модель</button>
+            <button id="clear-model-btn" class="control-btn danger">🗑️ Очистить всё</button>
+        </div>
+
+        <!-- Camera Controls -->
+        <div class="camera-controls">
+            <button id="flip-camera-btn" class="control-btn">🔄 Переключить камеру</button>
+        </div>
+
+        <div id="error" class="error"></div>
+        
+        <div style="text-align: center; color: #484f58; font-size: 11px; margin-top: 16px;">v7</div>
+    </div>
+
+    <script src="https://cdn.jsdelivr.net/npm/@tensorflow/tfjs@latest/dist/tf.min.js"></script>
+    <script src="https://cdn.jsdelivr.net/npm/@tensorflow-models/mobilenet@latest/dist/mobilenet.min.js"></script>
+    <script src="https://cdn.jsdelivr.net/npm/@tensorflow-models/knn-classifier@latest/dist/knn-classifier.min.js"></script>
+    <script>
+        // Check if libraries loaded
+        window.addEventListener('DOMContentLoaded', function() {
+            if (typeof tf === 'undefined') {
+                document.getElementById('error').textContent = 'Не удалось загрузить TensorFlow.js. Проверьте подключение к интернету и отключите блокировщики рекламы.';
+            }
+        });
+    </script>
+    <script src="app.js?v=7"></script>
+</body>
+</html>
