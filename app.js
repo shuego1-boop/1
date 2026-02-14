@@ -195,7 +195,6 @@ function setModeUI(isAdmin) {
             wrapper.style.display = '';
         });
         // Switch to training mode by default for admins
-        currentMode = 'training';
         switchMode('training');
     } else {
         // Hide all admin-only sections
@@ -203,7 +202,6 @@ function setModeUI(isAdmin) {
             wrapper.style.display = 'none';
         });
         // Force recognition mode for public users
-        currentMode = 'recognition';
         switchMode('recognition');
     }
 }
