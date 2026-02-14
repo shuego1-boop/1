@@ -27,7 +27,7 @@ const STORAGE_KEY = 'myCarDetectorModel';
 const DATASET_STORAGE_KEY = 'carDetectorDataset';
 const CONFIDENCE_THRESHOLD = 0.70; // v11: Changed to 0.7 for "Не распознано"
 const HIGH_CONFIDENCE_THRESHOLD = 0.90;
-const APP_VERSION = 'v12';
+const APP_VERSION = 'v13';
 const IS_IOS = /iPhone|iPad|iPod/.test(navigator.userAgent);
 const IOS_VIDEO_READY_DELAY = 400; // iOS needs more time for video initialization
 const DEFAULT_VIDEO_READY_DELAY = 200;
@@ -162,8 +162,36 @@ async function loadModelCatalog() {
     }
 }
 
+// v13: Helper to get selected model id from UI
+function getSelectedModelId() {
+    return modelSelect.value || currentModelId || '';
+}
+
+// v13: Helper to require selected model id (validates admin mode and selection)
+function requireSelectedModelId() {
+    if (!isAdminMode) {
+        alert('Admin access required');
+        console.log(`[${APP_VERSION}] Action blocked: admin access required`);
+        return null;
+    }
+    
+    const selectedId = getSelectedModelId();
+    if (!selectedId) {
+        alert('Please select a model from the catalog');
+        console.log(`[${APP_VERSION}] Action blocked: no model selected`);
+        return null;
+    }
+    
+    // Sync currentModelId with UI selection
+    currentModelId = selectedId;
+    return selectedId;
+}
+
 // v11: Update model selector dropdown
 function updateModelSelect() {
+    // v13: Remember the current selection before clearing
+    const previousSelection = modelSelect.value;
+    
     modelSelect.innerHTML = '';
     
     if (modelCatalog.length === 0) {
@@ -178,11 +206,16 @@ function updateModelSelect() {
         const option = document.createElement('option');
         option.value = model.id;
         option.textContent = `${model.name} (${model.classesCount || 0} classes, ${model.examplesCount || 0} examples)`;
-        if (model.id === currentModelId) {
-            option.selected = true;
-        }
         modelSelect.appendChild(option);
     });
+    
+    // v13: Restore selection - prioritize currentModelId, then previousSelection
+    if (currentModelId && modelCatalog.find(m => m.id === currentModelId)) {
+        modelSelect.value = currentModelId;
+    } else if (previousSelection && modelCatalog.find(m => m.id === previousSelection)) {
+        modelSelect.value = previousSelection;
+        currentModelId = previousSelection; // Sync back
+    }
 }
 
 // v12: Set mode UI - controls visibility of admin-only sections
@@ -481,11 +514,6 @@ async function loadModelFromFirestoreChunks(modelId) {
 
 // v12: Save model to Firestore chunks (replaces Firebase Storage)
 async function saveModelToFirebase() {
-    if (!isAdminMode) {
-        alert('Admin access required to save models');
-        return;
-    }
-    
     try {
         const numClasses = classifier.getNumClasses();
         
@@ -494,9 +522,9 @@ async function saveModelToFirebase() {
             return;
         }
         
-        const selectedModelId = modelSelect.value;
+        // v13: Use helper to validate and get selected model
+        const selectedModelId = requireSelectedModelId();
         if (!selectedModelId) {
-            alert('Please select a model from the catalog');
             return;
         }
         
@@ -577,9 +605,9 @@ async function saveModelToFirebase() {
 // v12: Load model from Firestore chunks (replaces Firebase Storage)
 async function loadModelFromFirebase() {
     try {
-        const selectedModelId = modelSelect.value;
+        // v13: Use helper to validate and get selected model
+        const selectedModelId = requireSelectedModelId();
         if (!selectedModelId) {
-            alert('Please select a model from the catalog');
             return;
         }
         
@@ -723,14 +751,9 @@ function exportModel() {
 
 // v11: Rename model (admin only)
 async function renameModel() {
-    if (!isAdminMode) {
-        alert('Admin access required');
-        return;
-    }
-    
-    const selectedModelId = modelSelect.value;
+    // v13: Use helper to validate and get selected model
+    const selectedModelId = requireSelectedModelId();
     if (!selectedModelId) {
-        alert('Please select a model from the catalog');
         return;
     }
     
@@ -760,14 +783,9 @@ async function renameModel() {
 
 // v12: Delete model (admin only)
 async function deleteModel() {
-    if (!isAdminMode) {
-        alert('Admin access required');
-        return;
-    }
-    
-    const selectedModelId = modelSelect.value;
+    // v13: Use helper to validate and get selected model
+    const selectedModelId = requireSelectedModelId();
     if (!selectedModelId) {
-        alert('Please select a model from the catalog');
         return;
     }
     
@@ -1211,6 +1229,14 @@ async function startCapture(className) {
         errorElement.textContent = '⚠️ Камера не активна! Нажмите кнопку "Перезапустить"';
         restartCameraBtn.classList.add('pulse'); // Add animation
         return;
+    }
+    
+    // v13: Require selected model in admin mode
+    if (isAdminMode) {
+        const modelId = requireSelectedModelId();
+        if (!modelId) {
+            return;
+        }
     }
     
     // Verify video element (removed readyState check for iOS compatibility)
@@ -1695,6 +1721,15 @@ function setupEventListeners() {
     renameModelBtn.addEventListener('click', renameModel);
     deleteModelBtn.addEventListener('click', deleteModel);
     clearModelBtn.addEventListener('click', clearModel);
+    
+    // v13: Sync currentModelId when select changes
+    modelSelect.addEventListener('change', () => {
+        const newValue = modelSelect.value;
+        if (newValue) {
+            currentModelId = newValue;
+            console.log(`[${APP_VERSION}] Model selection changed to: ${currentModelId}`);
+        }
+    });
     
     // Camera controls
     flipCameraBtn.addEventListener('click', flipCamera);
