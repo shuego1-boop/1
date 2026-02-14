@@ -359,13 +359,14 @@ async function initializeDefaultModels() {
             const modelRef = db.collection('models').doc(modelId);
             batch.set(modelRef, {
                 name: `Model ${i}`,
-                storagePath: `models/${modelId}/dataset.json`,
                 format: 'knn-mobilenet-v1',
                 updatedAt: firebase.firestore.FieldValue.serverTimestamp(),
                 sizeBytes: 0,
                 classesCount: 0,
                 examplesCount: 0,
-                appVersion: APP_VERSION
+                appVersion: APP_VERSION,
+                datasetVersion: 0,
+                chunksCount: 0
             });
         }
         
