@@ -43,6 +43,7 @@ async function init() {
             if (retries >= maxRetries) {
                 throw new Error('Не удалось загрузить TensorFlow.js. Проверьте подключение к интернету и отключите блокировщики рекламы.');
             }
+            // Yield control back to event loop between checks
             await new Promise(resolve => setTimeout(resolve, 500));
             retries++;
         }
@@ -191,7 +192,7 @@ function addClassPrompt() {
         }
         
         // Validate class name: only letters, numbers, spaces, hyphen, underscore
-        const validNameRegex = /^[a-zA-Zа-яА-ЯёЁ0-9\s\-_]+$/;
+        const validNameRegex = /^[a-zA-Zа-яА-ЯёЁ0-9\s_\-]+$/;
         if (!validNameRegex.test(name)) {
             alert('Название класса может содержать только буквы, цифры, пробелы, дефис и подчёркивание');
             return;
@@ -501,26 +502,20 @@ function saveModelToStorage() {
         const modelJson = JSON.stringify(modelData);
         const modelSizeMB = (modelJson.length / (1024 * 1024)).toFixed(2);
         
-        localStorage.setItem(STORAGE_KEY, modelJson);
-        alert(`✅ Модель сохранена! (${modelSizeMB} MB)`);
+        try {
+            localStorage.setItem(STORAGE_KEY, modelJson);
+            alert(`✅ Модель сохранена! (${modelSizeMB} MB)`);
+        } catch (storageError) {
+            if (storageError.name === 'QuotaExceededError') {
+                alert(`❌ Недостаточно места в localStorage!\n\nРазмер модели: ${modelSizeMB} MB\nЛимит: ~5-10 MB\n\nРекомендации:\n• Удалите старые классы\n• Уменьшите количество примеров\n• Очистите localStorage`);
+            } else {
+                throw storageError;
+            }
+        }
         
     } catch (error) {
         console.error('Save error:', error);
-        
-        if (error.name === 'QuotaExceededError') {
-            const dataset = classifier.getClassifierDataset();
-            const datasetObj = {};
-            Object.keys(dataset).forEach((className) => {
-                const data = dataset[className].dataSync();
-                datasetObj[className] = Array.from(data);
-            });
-            const modelData = { classes: classes, dataset: datasetObj };
-            const modelSizeMB = (JSON.stringify(modelData).length / (1024 * 1024)).toFixed(2);
-            
-            alert(`❌ Недостаточно места в localStorage!\n\nРазмер модели: ${modelSizeMB} MB\nЛимит: ~5-10 MB\n\nРекомендации:\n• Удалите старые классы\n• Уменьшите количество примеров\n• Очистите localStorage`);
-        } else {
-            alert('Ошибка сохранения: ' + error.message);
-        }
+        alert('Ошибка сохранения: ' + error.message);
     }
 }
 
@@ -627,24 +622,22 @@ function autoSave() {
             dataset: datasetObj
         };
         
-        localStorage.setItem(STORAGE_KEY, JSON.stringify(modelData));
-        console.log('Model auto-saved');
+        const modelJson = JSON.stringify(modelData);
+        
+        try {
+            localStorage.setItem(STORAGE_KEY, modelJson);
+            console.log('Model auto-saved');
+        } catch (storageError) {
+            if (storageError.name === 'QuotaExceededError') {
+                const modelSizeMB = (modelJson.length / (1024 * 1024)).toFixed(2);
+                console.error(`QuotaExceededError: Model size is ${modelSizeMB} MB`);
+                errorElement.textContent = `⚠️ Автосохранение не удалось: модель слишком большая (${modelSizeMB} MB). Удалите старые классы.`;
+            } else {
+                throw storageError;
+            }
+        }
     } catch (error) {
         console.error('Auto-save error:', error);
-        
-        if (error.name === 'QuotaExceededError') {
-            const dataset = classifier.getClassifierDataset();
-            const datasetObj = {};
-            Object.keys(dataset).forEach((className) => {
-                const data = dataset[className].dataSync();
-                datasetObj[className] = Array.from(data);
-            });
-            const modelData = { classes: classes, dataset: datasetObj };
-            const modelSizeMB = (JSON.stringify(modelData).length / (1024 * 1024)).toFixed(2);
-            
-            console.error(`QuotaExceededError: Model size is ${modelSizeMB} MB`);
-            errorElement.textContent = `⚠️ Автосохранение не удалось: модель слишком большая (${modelSizeMB} MB). Удалите старые классы.`;
-        }
     }
 }
 
