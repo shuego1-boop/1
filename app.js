@@ -15,7 +15,7 @@ let isDOMManipulationSafe = true;
 // Constants
 const STORAGE_KEY = 'myCarDetectorModel';
 const CONFIDENCE_THRESHOLD = 0.80;
-const APP_VERSION = 'v8';
+const APP_VERSION = 'v9';
 const IS_IOS = /iPhone|iPad|iPod/.test(navigator.userAgent);
 const IOS_VIDEO_READY_DELAY = 400; // iOS needs more time for video initialization
 const DEFAULT_VIDEO_READY_DELAY = 200;
@@ -65,9 +65,13 @@ async function init() {
         await initCamera();
         
         errorElement.textContent = '';
-        console.log(`
-🚗 My Car Detector ${APP_VERSION} loaded
-📱 iOS Safari fixes applied:
+        console.log(`🚗 My Car Detector ${APP_VERSION} loaded`);
+        
+        // v9: Add detailed startup logs
+        console.log(`[${APP_VERSION}] 📱 User Agent:`, navigator.userAgent);
+        console.log(`[${APP_VERSION}] 🎥 Video element:`, !!videoElement);
+        console.log(`[${APP_VERSION}] 📹 Stream active:`, stream?.active);
+        console.log(`[${APP_VERSION}] iOS Safari fixes applied:
    - Video isolated in separate container
    - No innerHTML manipulation
    - Manual restart button added
@@ -282,7 +286,7 @@ function renderClasses() {
     renderClassesRetryCount = 0;
     
     // NEVER use innerHTML near video on iOS!
-    console.log('[v8] Rendering classes, current count:', Object.keys(classes).length);
+    console.log('[v9] Rendering classes, current count:', Object.keys(classes).length);
     
     // Remove old cards MANUALLY
     const existingCards = classesContainer.querySelectorAll('.class-card');
@@ -341,7 +345,7 @@ function renderClasses() {
     
     // iOS Safari: NEVER modify video element or srcObject during DOM manipulation!
     // Video is now in isolated container, but still verify state
-    console.log('[v8] Classes rendered, video state:', {
+    console.log('[v9] Classes rendered, video state:', {
         paused: videoElement?.paused,
         readyState: videoElement?.readyState,
         streamActive: stream?.active
@@ -350,7 +354,7 @@ function renderClasses() {
 
 // Separate function to attach event listeners (called after renderClasses)
 function attachClassEventListeners() {
-    console.log('[v8] Attaching event listeners to capture buttons');
+    console.log('[v9] Attaching event listeners to capture buttons');
     
     document.querySelectorAll('.capture-btn').forEach(btn => {
         const className = btn.dataset.class;
@@ -359,10 +363,16 @@ function attachClassEventListeners() {
         btn.addEventListener('touchstart', (e) => {
             e.preventDefault();
             e.stopPropagation();
+            console.log('[v9] Touch start on:', btn.dataset.class);
             startCapture(className);
         }, { passive: false });
         btn.addEventListener('mouseup', stopCapture);
-        btn.addEventListener('touchend', stopCapture);
+        btn.addEventListener('touchend', (e) => {
+            e.preventDefault();
+            e.stopPropagation();
+            console.log('[v9] Touch end');
+            stopCapture();
+        }, { passive: false });
         btn.addEventListener('mouseleave', stopCapture);
         btn.addEventListener('touchcancel', stopCapture);
     });
@@ -387,7 +397,7 @@ async function startCapture(className) {
     
     // CRITICAL: Verify stream is active before ANYTHING
     if (!stream || !stream.active) {
-        console.error('[v8] Stream not active! Current state:', {
+        console.error('[v9] Stream not active! Current state:', {
             streamExists: !!stream,
             streamActive: stream?.active,
             videoSrc: !!videoElement?.srcObject
@@ -400,7 +410,7 @@ async function startCapture(className) {
     
     // Verify video element (removed readyState check for iOS compatibility)
     if (!videoElement) {
-        console.error('[v8] Video element not found');
+        console.error('[v9] Video element not found');
         errorElement.textContent = '⚠️ Видео не готово. Подождите или перезапустите камеру.';
         return;
     }
@@ -440,7 +450,7 @@ async function startCapture(className) {
     isCapturing = true;
     isDOMManipulationSafe = false;
     currentCapturingClass = className;
-    console.log(`[v8] Starting capture for ${className}`);
+    console.log(`[v9] Starting capture for ${className}`);
     
     const btn = document.querySelector(`.capture-btn[data-class="${className}"]`);
     if (btn) {
@@ -454,12 +464,22 @@ async function startCapture(className) {
         }
         
         try {
-            // Check video is ready - ensure it has actual pixel data (iOS compatible: no readyState check)
-            if (!videoElement.videoWidth || !videoElement.videoHeight) {
-                const retryDelay = IS_IOS ? IOS_VIDEO_READY_DELAY : DEFAULT_VIDEO_READY_DELAY;
-                captureInterval = setTimeout(captureFrame, retryDelay);
+            // iOS Safari aggressive fix - skip readyState check entirely
+            if (!videoElement || !videoElement.videoWidth || !videoElement.videoHeight) {
+                console.warn('[v9] Video not ready, retrying...');
+                captureInterval = setTimeout(captureFrame, 200);
                 return;
             }
+            
+            // iOS Safari: Force check that video is actually playing
+            if (videoElement.paused) {
+                console.warn('[v9] Video paused, attempting to play...');
+                videoElement.play().catch(err => console.error('[v9] Play failed:', err));
+                captureInterval = setTimeout(captureFrame, 200);
+                return;
+            }
+            
+            console.log('[v9] ✅ Capturing frame, video:', videoElement.videoWidth, 'x', videoElement.videoHeight);
             
             const img = tf.browser.fromPixels(videoElement);
             const activation = mobilenetModel.infer(img, true);
@@ -469,17 +489,23 @@ async function startCapture(className) {
             
             classes[className].examples++;
             
-            // Visual flash effect (clear previous timeout to avoid stacking)
+            // v9: Visual flash for user feedback
             if (flashTimeout) {
                 clearTimeout(flashTimeout);
             }
-            videoElement.style.filter = 'brightness(1.5)';
+            videoElement.style.filter = 'brightness(1.8)';
             flashTimeout = setTimeout(() => {
                 videoElement.style.filter = 'brightness(1)';
                 flashTimeout = null;
-            }, 100);
+            }, 80);
             
-            console.log('✅ Frame captured! Total examples:', classes[className].examples);
+            // v9: Haptic feedback on iOS
+            if (navigator.vibrate) {
+                navigator.vibrate(30);
+            }
+            
+            // v9: Console log for debugging
+            console.log(`[v9] 📸 Frame captured! ${className} now has ${classes[className].examples} examples`);
             
             // Update UI
             const examplesEl = document.querySelector(`.capture-btn[data-class="${className}"]`)
@@ -789,7 +815,7 @@ flipCameraBtn.addEventListener('click', flipCamera);
 
 // Restart camera button handler
 async function restartCamera() {
-    console.log('[v8] Manual camera restart requested');
+    console.log('[v9] Manual camera restart requested');
     
     restartCameraBtn.disabled = true;
     restartCameraBtn.textContent = '⏳ Перезапуск...';
@@ -802,7 +828,7 @@ async function restartCamera() {
         // Stop old stream
         if (stream) {
             stream.getTracks().forEach(track => {
-                console.log('[v8] Stopping track:', track.kind);
+                console.log('[v9] Stopping track:', track.kind);
                 track.stop();
             });
         }
@@ -823,7 +849,7 @@ async function restartCamera() {
         restartCameraBtn.classList.remove('pulse');
         
     } catch (error) {
-        console.error('[v8] Restart failed:', error);
+        console.error('[v9] Restart failed:', error);
         alert('❌ Не удалось перезапустить: ' + error.message);
         restartCameraBtn.textContent = '⚠️ Попробовать ещё раз';
     } finally {
