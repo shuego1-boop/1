@@ -358,10 +358,14 @@ function attachClassEventListeners() {
         btn.addEventListener('mousedown', () => startCapture(className));
         btn.addEventListener('touchstart', (e) => {
             e.preventDefault();
+            e.stopPropagation();
             startCapture(className);
-        });
+        }, { passive: false });
         btn.addEventListener('mouseup', stopCapture);
-        btn.addEventListener('touchend', stopCapture);
+        btn.addEventListener('touchend', (e) => {
+            e.preventDefault();
+            stopCapture();
+        }, { passive: false });
         btn.addEventListener('mouseleave', stopCapture);
         btn.addEventListener('touchcancel', stopCapture);
     });
@@ -378,7 +382,10 @@ let captureDebounceTimer = null;
 let currentCapturingClass = null;
 
 async function startCapture(className) {
-    console.log(`[v8] startCapture called for: ${className}`);
+    console.log('🎬 Starting capture for:', className);
+    console.log('📹 Video readyState:', videoElement?.readyState);
+    console.log('📐 Video dimensions:', videoElement?.videoWidth, 'x', videoElement?.videoHeight);
+    console.log('🧠 Models loaded:', !!mobilenetModel, !!classifier);
     
     // CRITICAL: Verify stream is active before ANYTHING
     if (!stream || !stream.active) {
@@ -393,9 +400,9 @@ async function startCapture(className) {
         return;
     }
     
-    // Verify video element
-    if (!videoElement || videoElement.readyState < 2) {
-        console.error('[v8] Video not ready:', videoElement?.readyState);
+    // Verify video element (removed readyState check for iOS compatibility)
+    if (!videoElement) {
+        console.error('[v8] Video element not found');
         errorElement.textContent = '⚠️ Видео не готово. Подождите или перезапустите камеру.';
         return;
     }
@@ -449,8 +456,8 @@ async function startCapture(className) {
         }
         
         try {
-            // Check video is ready - ensure it has actual pixel data
-            if (!videoElement.videoWidth || !videoElement.videoHeight || videoElement.readyState < 2) {
+            // Check video is ready - ensure it has actual pixel data (iOS compatible: no readyState check)
+            if (!videoElement.videoWidth || !videoElement.videoHeight) {
                 const retryDelay = IS_IOS ? IOS_VIDEO_READY_DELAY : DEFAULT_VIDEO_READY_DELAY;
                 captureInterval = setTimeout(captureFrame, retryDelay);
                 return;
@@ -463,6 +470,19 @@ async function startCapture(className) {
             // Note: do NOT dispose activation - KNN classifier keeps a reference to it
             
             classes[className].examples++;
+            
+            // Visual flash effect
+            videoElement.style.filter = 'brightness(1.5)';
+            setTimeout(() => {
+                videoElement.style.filter = 'brightness(1)';
+            }, 100);
+            
+            // Haptic feedback for iOS
+            if (navigator.vibrate) {
+                navigator.vibrate(50);
+            }
+            
+            console.log('✅ Frame captured! Total examples:', classes[className].examples);
             
             // Update UI
             const examplesEl = document.querySelector(`.capture-btn[data-class="${className}"]`)
