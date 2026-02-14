@@ -7,11 +7,17 @@
     <meta http-equiv="Pragma" content="no-cache">
     <meta http-equiv="Expires" content="0">
     <title>🚗 My Car Detector</title>
-    <link rel="stylesheet" href="style.css?v=8">
+    <link rel="stylesheet" href="style.css?v=11">
 </head>
 <body>
     <div class="container">
-        <h1>🚗 My Car Detector <span style="font-size: 14px; color: #8b949e;">v10</span></h1>
+        <h1>🚗 My Car Detector <span style="font-size: 14px; color: #8b949e;">v11</span></h1>
+        
+        <!-- Admin Button and Status -->
+        <div class="admin-controls">
+            <div id="mode-status" class="mode-status">Public mode</div>
+            <button id="admin-btn" class="admin-btn">🔐 Admin</button>
+        </div>
         
         <!-- Mode Tabs -->
         <div class="mode-tabs">
@@ -82,11 +88,22 @@
             </div>
         </div>
 
+        <!-- Model Selector -->
+        <div class="model-selector">
+            <label for="model-select" style="color: #c9d1d9; font-weight: 600; display: block; margin-bottom: 8px;">📚 Model Catalog:</label>
+            <select id="model-select" class="model-select">
+                <option value="">Loading models...</option>
+            </select>
+        </div>
+
         <!-- Model Management -->
         <div class="model-controls">
-            <button id="save-model-btn" class="control-btn">💾 Сохранить модель</button>
-            <button id="load-model-btn" class="control-btn">📂 Загрузить модель</button>
-            <button id="clear-model-btn" class="control-btn danger">🗑️ Очистить всё</button>
+            <button id="load-model-btn" class="control-btn">📂 Load Model</button>
+            <button id="export-model-btn" class="control-btn">💾 Export</button>
+            <button id="save-model-btn" class="control-btn admin-only" disabled>💾 Save to Server</button>
+            <button id="rename-model-btn" class="control-btn admin-only" disabled>✏️ Rename</button>
+            <button id="delete-model-btn" class="control-btn danger admin-only" disabled>🗑️ Delete</button>
+            <button id="clear-model-btn" class="control-btn danger">🔄 Clear Local</button>
         </div>
 
         <!-- Camera Controls -->
@@ -97,12 +114,41 @@
 
         <div id="error" class="error"></div>
         
-        <div style="text-align: center; color: #484f58; font-size: 11px; margin-top: 16px;">v10</div>
+        <div style="text-align: center; color: #484f58; font-size: 11px; margin-top: 16px;">v11</div>
     </div>
 
+    <!-- Admin Login Modal -->
+    <div id="admin-modal" class="modal">
+        <div class="modal-content">
+            <div class="modal-header">
+                <h2>🔐 Admin Login</h2>
+                <button id="close-modal-btn" class="close-btn">&times;</button>
+            </div>
+            <div id="admin-login-form" class="modal-body">
+                <input type="email" id="admin-email" placeholder="Email" class="modal-input">
+                <input type="password" id="admin-password" placeholder="Password" class="modal-input">
+                <button id="login-btn" class="modal-btn primary">Login</button>
+                <div id="login-error" class="modal-error"></div>
+            </div>
+            <div id="admin-panel" class="modal-body" style="display: none;">
+                <div style="color: #238636; margin-bottom: 16px; font-weight: 600;">✅ Admin mode active</div>
+                <div style="color: #8b949e; margin-bottom: 16px; font-size: 14px;">Email: <span id="admin-email-display"></span></div>
+                <button id="logout-btn" class="modal-btn">Logout</button>
+                <button id="init-defaults-btn" class="modal-btn" style="margin-top: 8px;">Initialize Default Models</button>
+            </div>
+        </div>
+    </div>
+
+    <!-- Firebase SDKs -->
+    <script src="https://www.gstatic.com/firebasejs/9.22.0/firebase-app-compat.js"></script>
+    <script src="https://www.gstatic.com/firebasejs/9.22.0/firebase-auth-compat.js"></script>
+    <script src="https://www.gstatic.com/firebasejs/9.22.0/firebase-firestore-compat.js"></script>
+    <script src="https://www.gstatic.com/firebasejs/9.22.0/firebase-storage-compat.js"></script>
+    
+    <!-- TensorFlow -->
     <script src="https://cdn.jsdelivr.net/npm/@tensorflow/tfjs@latest/dist/tf.min.js"></script>
     <script src="https://cdn.jsdelivr.net/npm/@tensorflow-models/mobilenet@latest/dist/mobilenet.min.js"></script>
     <script src="https://cdn.jsdelivr.net/npm/@tensorflow-models/knn-classifier@latest/dist/knn-classifier.min.js"></script>
-    <script src="app.js?v=8"></script>
+    <script src="app.js?v=11"></script>
 </body>
 </html>
