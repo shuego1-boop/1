@@ -1264,6 +1264,7 @@ async function predict() {
                 
                 recognitionStatus.textContent = `Последнее: ${predictedClass} (${confidencePercent}%)`;
             }
+        }
         
     } catch (error) {
         console.error('Prediction error:', error);
