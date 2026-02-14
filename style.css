@@ -108,8 +108,18 @@ h1 {
     opacity: 1;
 }
 
+.result-overlay.medium-confidence {
+    background: rgba(88, 166, 255, 0.85);
+    opacity: 1;
+}
+
 .result-overlay.low-confidence {
     background: rgba(219, 156, 42, 0.9);
+    opacity: 1;
+}
+
+.result-overlay.unknown {
+    background: rgba(248, 81, 73, 0.9);
     opacity: 1;
 }
 

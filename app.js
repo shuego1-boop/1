@@ -16,11 +16,103 @@ let selectedClass = null; // Currently selected class for capture
 // Constants
 const STORAGE_KEY = 'myCarDetectorModel';
 const DATASET_STORAGE_KEY = 'carDetectorDataset';
-const CONFIDENCE_THRESHOLD = 0.80;
-const APP_VERSION = 'v10';
+const CONFIDENCE_THRESHOLD = 0.7; // 70% threshold for unknown detection (v11)
+const HIGH_CONFIDENCE_THRESHOLD = 0.9; // 90% threshold for high confidence display (v11)
+const APP_VERSION = 'v11';
 const IS_IOS = /iPhone|iPad|iPod/.test(navigator.userAgent);
 const IOS_VIDEO_READY_DELAY = 400; // iOS needs more time for video initialization
 const DEFAULT_VIDEO_READY_DELAY = 200;
+
+// IndexedDB Storage for unlimited model size (v11)
+const DB_NAME = 'CarDetectorDB';
+const DB_VERSION = 1;
+const STORE_NAME = 'models';
+
+let db = null;
+
+// Initialize IndexedDB
+async function initDB() {
+    return new Promise((resolve, reject) => {
+        const request = indexedDB.open(DB_NAME, DB_VERSION);
+        
+        request.onerror = () => reject(request.error);
+        request.onsuccess = () => {
+            db = request.result;
+            console.log('[v11] IndexedDB initialized');
+            resolve(db);
+        };
+        
+        request.onupgradeneeded = (event) => {
+            const db = event.target.result;
+            if (!db.objectStoreNames.contains(STORE_NAME)) {
+                db.createObjectStore(STORE_NAME);
+                console.log('[v11] IndexedDB object store created');
+            }
+        };
+    });
+}
+
+// Save model to IndexedDB
+async function saveModelToDB(key, data) {
+    if (!db) await initDB();
+    
+    return new Promise((resolve, reject) => {
+        const transaction = db.transaction([STORE_NAME], 'readwrite');
+        const store = transaction.objectStore(STORE_NAME);
+        const request = store.put(data, key);
+        
+        request.onsuccess = () => {
+            console.log(`[v11] ✅ Saved to IndexedDB: ${key} (${JSON.stringify(data).length} bytes)`);
+            resolve();
+        };
+        request.onerror = () => {
+            console.error(`[v11] ❌ Failed to save ${key}:`, request.error);
+            reject(request.error);
+        };
+    });
+}
+
+// Load model from IndexedDB
+async function loadModelFromDB(key) {
+    if (!db) await initDB();
+    
+    return new Promise((resolve, reject) => {
+        const transaction = db.transaction([STORE_NAME], 'readonly');
+        const store = transaction.objectStore(STORE_NAME);
+        const request = store.get(key);
+        
+        request.onsuccess = () => {
+            if (request.result) {
+                console.log(`[v11] ✅ Loaded from IndexedDB: ${key}`);
+                resolve(request.result);
+            } else {
+                console.log(`[v11] No data found for key: ${key}`);
+                resolve(null);
+            }
+        };
+        request.onerror = () => {
+            console.error(`[v11] ❌ Failed to load ${key}:`, request.error);
+            reject(request.error);
+        };
+    });
+}
+
+// Delete from IndexedDB
+async function deleteFromDB(key) {
+    if (!db) await initDB();
+    
+    return new Promise((resolve, reject) => {
+        const transaction = db.transaction([STORE_NAME], 'readwrite');
+        const store = transaction.objectStore(STORE_NAME);
+        const request = store.delete(key);
+        
+        request.onsuccess = () => {
+            console.log(`[v11] ✅ Deleted from IndexedDB: ${key}`);
+            resolve();
+        };
+        request.onerror = () => reject(request.error);
+    });
+}
 
 // UI Elements
 const trainingTab = document.getElementById('training-tab');
@@ -63,6 +155,9 @@ async function init() {
         classifier = knnClassifier.create();
         console.log('KNN Classifier created');
         
+        // Initialize IndexedDB FIRST (v11)
+        await initDB();
+        
         // Initialize camera
         await initCamera();
         
@@ -81,7 +176,7 @@ async function init() {
 `);
         
         // Try to load saved model
-        loadModelFromStorage();
+        await loadModelFromStorage();
         
     } catch (error) {
         console.error('Initialization error:', error);
@@ -604,25 +699,34 @@ async function predict() {
             img = tf.browser.fromPixels(videoElement);
             activation = mobilenetModel.infer(img, true);
             
-            const prediction = await classifier.predictClass(activation);
+            const prediction = await classifier.predictClass(activation, 3); // Get top 3 predictions
             
             const predictedClass = prediction.label;
             const confidence = prediction.confidences[predictedClass];
-            const confidencePercent = Math.round(confidence * 100);
+            const confidencePercent = (confidence * 100).toFixed(1);
             
-            resultOverlay.textContent = `${predictedClass} (${confidencePercent}%)`;
-            
-            if (confidence >= CONFIDENCE_THRESHOLD) {
-                resultOverlay.className = 'result-overlay high-confidence';
+            // v11: Check if confidence meets threshold for "Unknown" detection
+            if (confidence < CONFIDENCE_THRESHOLD) {
+                // UNKNOWN OBJECT
+                resultOverlay.textContent = `❓ Unknown (${confidencePercent}%)`;
+                resultOverlay.className = 'result-overlay unknown';
+                recognitionStatus.textContent = `Unknown Object - Confidence: ${confidencePercent}% (< ${(CONFIDENCE_THRESHOLD * 100).toFixed(0)}% threshold)`;
             } else {
-                resultOverlay.className = 'result-overlay low-confidence';
+                // KNOWN OBJECT - show prediction
+                resultOverlay.textContent = `${predictedClass} (${confidencePercent}%)`;
+                
+                if (confidence >= HIGH_CONFIDENCE_THRESHOLD) {
+                    resultOverlay.className = 'result-overlay high-confidence';
+                } else {
+                    resultOverlay.className = 'result-overlay medium-confidence';
+                }
+                
+                recognitionStatus.textContent = `Последнее: ${predictedClass} (${confidencePercent}%)`;
             }
-            
-            recognitionStatus.textContent = `Последнее: ${predictedClass} (${confidencePercent}%)`;
         }
         
     } catch (error) {
-        console.error('Prediction error:', error);
+        console.error('[v11] Prediction error:', error);
         recognitionStatus.textContent = 'Ошибка, повтор...';
     } finally {
         // ALWAYS dispose tensors, even on error
@@ -636,7 +740,7 @@ async function predict() {
 }
 
 // Save/Load model
-function saveModelToStorage() {
+async function saveModelToStorage() {
     try {
         const numClasses = classifier.getNumClasses();
         
@@ -645,104 +749,119 @@ function saveModelToStorage() {
             return;
         }
         
-        const dataset = classifier.getClassifierDataset();
-        const datasetObj = {};
+        const classifierDataset = classifier.getClassifierDataset();
         
-        Object.keys(dataset).forEach((className) => {
-            const data = dataset[className].dataSync();
-            datasetObj[className] = Array.from(data);
-        });
-        
-        const modelData = {
-            classes: classes,
-            dataset: datasetObj
-        };
-        
-        const modelJson = JSON.stringify(modelData);
-        const modelSizeMB = (modelJson.length / (1024 * 1024)).toFixed(2);
-        
-        try {
-            localStorage.setItem(STORAGE_KEY, modelJson);
-            alert(`✅ Модель сохранена! (${modelSizeMB} MB)`);
-        } catch (storageError) {
-            if (storageError.name === 'QuotaExceededError') {
-                alert(`❌ Недостаточно места в localStorage!\n\nРазмер модели: ${modelSizeMB} MB\nЛимит: ~5-10 MB\n\nРекомендации:\n• Удалите старые классы\n• Уменьшите количество примеров\n• Очистите localStorage`);
-            } else {
-                throw storageError;
-            }
+        // Convert to serializable format
+        const dataset = {};
+        for (const key in classifierDataset) {
+            const data = classifierDataset[key].dataSync();
+            dataset[key] = {
+                data: Array.from(data),
+                shape: classifierDataset[key].shape
+            };
         }
         
+        const modelSizeBytes = JSON.stringify(dataset).length;
+        const modelSizeMB = (modelSizeBytes / (1024 * 1024)).toFixed(2);
+        
+        // Save to IndexedDB (unlimited storage!)
+        await saveModelToDB('carDetectorModel', dataset);
+        await saveModelToDB('carDetectorClasses', classes);
+        
+        console.log(`[v11] ✅ Model saved to IndexedDB (${modelSizeMB} MB)`);
+        
+        // Also try localStorage as backup (will fail silently if too large)
+        try {
+            localStorage.setItem('carDetectorClasses', JSON.stringify(classes));
+        } catch (e) {
+            console.warn('[v11] localStorage backup failed (model too large):', e.message);
+        }
+        
+        alert(`✅ Модель сохранена! (${modelSizeMB} MB)\n💾 Используется IndexedDB (без ограничений)`);
+        
     } catch (error) {
-        console.error('Save error:', error);
+        console.error('[v11] ❌ Save failed:', error);
         alert('Ошибка сохранения: ' + error.message);
     }
 }
 
-function loadModelFromStorage() {
+async function loadModelFromStorage() {
     try {
-        const saved = localStorage.getItem(STORAGE_KEY);
+        // Initialize IndexedDB first
+        await initDB();
         
-        if (!saved) {
-            console.log('No saved model found');
+        // Try IndexedDB first
+        let dataset = await loadModelFromDB('carDetectorModel');
+        let loadedClasses = await loadModelFromDB('carDetectorClasses');
+        
+        // Fallback to localStorage if IndexedDB empty
+        if (!dataset || !loadedClasses) {
+            console.log('[v11] Trying localStorage fallback...');
+            const localData = localStorage.getItem(STORAGE_KEY);
+            
+            if (localData) {
+                const modelData = JSON.parse(localData);
+                
+                // Convert old format to new format
+                if (modelData.dataset) {
+                    dataset = {};
+                    Object.keys(modelData.dataset).forEach((className) => {
+                        const data = modelData.dataset[className];
+                        if (data && Array.isArray(data) && data.length > 0 && data.length % 1024 === 0) {
+                            const numExamples = data.length / 1024;
+                            dataset[className] = {
+                                data: data,
+                                shape: [numExamples, 1024]
+                            };
+                        }
+                    });
+                }
+                
+                loadedClasses = modelData.classes || {};
+            }
+        }
+        
+        if (!dataset || !loadedClasses) {
+            console.log('[v11] No saved model found');
             return;
         }
         
-        const modelData = JSON.parse(saved);
-        classes = modelData.classes || {};
+        // Restore classes
+        classes = loadedClasses;
         
         // Restore classifier dataset
-        Object.keys(modelData.dataset).forEach((className) => {
-            const data = modelData.dataset[className];
+        const restoredDataset = {};
+        for (const className in dataset) {
+            const data = dataset[className];
+            const tensor = tf.tensor(data.data, data.shape);
+            restoredDataset[className] = tensor;
             
-            // Validate data length
-            if (!data || !Array.isArray(data) || data.length === 0) {
-                console.warn(`Skipping invalid data for class ${className}`);
-                return;
+            // Update example count
+            if (classes[className]) {
+                classes[className].examples = data.shape[0];
             }
-            
-            if (data.length % 1024 !== 0) {
-                console.warn(`Invalid data length for class ${className}: ${data.length}. Expected multiple of 1024.`);
-                return;
-            }
-            
-            const numExamples = data.length / 1024;
-            const tensor = tf.tensor(data, [numExamples, 1024]);
-            classifier.addExample(tensor, className);
-            tensor.dispose();
-        });
+        }
         
-        // Recalculate actual example counts from classifier to ensure synchronization
-        const dataset = classifier.getClassifierDataset();
-        Object.keys(classes).forEach((className) => {
-            if (dataset[className]) {
-                const actualExamples = dataset[className].shape[0];
-                const savedExamples = classes[className].examples;
-                
-                if (actualExamples !== savedExamples) {
-                    console.warn(`Example count mismatch for class ${className}: saved=${savedExamples}, actual=${actualExamples}`);
-                }
-                
-                classes[className].examples = actualExamples;
-            } else {
-                // Class exists in metadata but has no data in classifier
-                console.warn(`Class ${className} has no data in classifier, setting examples to 0`);
-                classes[className].examples = 0;
-            }
-        });
+        // Set the complete dataset at once (avoids multiple object spreads and tensor operations)
+        classifier.setClassifierDataset(restoredDataset);
         
         renderClasses();
-        console.log('Model loaded from storage');
+        console.log('[v11] ✅ Model loaded from IndexedDB');
         errorElement.textContent = '✅ Модель загружена из памяти';
         setTimeout(() => { errorElement.textContent = ''; }, 3000);
         
     } catch (error) {
-        console.error('Load error:', error);
+        console.error('[v11] ❌ Failed to load model:', error);
         errorElement.textContent = 'Ошибка загрузки модели: ' + error.message;
     }
 }
 
-function clearModel() {
-    if (confirm('Удалить все классы и сохранённую модель?')) {
+async function clearModel() {
+    if (!confirm('Удалить все классы и сохранённую модель?')) {
+        return;
+    }
+    
+    try {
         // Clear classifier
         if (classifier) {
             classifier.clearAllClasses();
@@ -750,53 +869,64 @@ function clearModel() {
         
         // Clear classes
         classes = {};
+        selectedClass = null;
+        
+        // Clear IndexedDB
+        await deleteFromDB('carDetectorModel');
+        await deleteFromDB('carDetectorClasses');
+        
+        // Clear localStorage backup
+        localStorage.removeItem(STORAGE_KEY);
+        localStorage.removeItem(DATASET_STORAGE_KEY);
+        localStorage.removeItem('carDetectorClasses');
+        
         renderClasses();
         
-        // Clear storage
-        localStorage.removeItem(STORAGE_KEY);
-        
+        console.log('[v11] ✅ All data cleared');
         alert('✅ Всё очищено');
+        
+    } catch (error) {
+        console.error('[v11] ❌ Failed to clear data:', error);
+        alert('Ошибка очистки: ' + error.message);
     }
 }
 
 // Auto-save function (silent save without alert)
-function autoSave() {
+async function autoSave() {
     try {
-        const numClasses = classifier.getNumClasses();
-        if (numClasses === 0) {
-            console.log('Auto-save skipped: no classes to save');
+        const classifierDataset = classifier.getClassifierDataset();
+        
+        if (!classifierDataset || Object.keys(classifierDataset).length === 0) {
+            console.log('[v11] Auto-save skipped: no classes to save');
             return;
         }
         
-        const dataset = classifier.getClassifierDataset();
-        const datasetObj = {};
-        
-        Object.keys(dataset).forEach((className) => {
-            const data = dataset[className].dataSync();
-            datasetObj[className] = Array.from(data);
-        });
-        
-        const modelData = {
-            classes: classes,
-            dataset: datasetObj
-        };
-        
-        const modelJson = JSON.stringify(modelData);
-        
-        try {
-            localStorage.setItem(STORAGE_KEY, modelJson);
-            console.log('Model auto-saved');
-        } catch (storageError) {
-            if (storageError.name === 'QuotaExceededError') {
-                const modelSizeMB = (modelJson.length / (1024 * 1024)).toFixed(2);
-                console.error(`QuotaExceededError: Model size is ${modelSizeMB} MB`);
-                errorElement.textContent = `⚠️ Автосохранение не удалось: модель слишком большая (${modelSizeMB} MB). Удалите старые классы.`;
-            } else {
-                throw storageError;
-            }
+        // Convert to serializable format
+        const dataset = {};
+        for (const key in classifierDataset) {
+            const data = classifierDataset[key].dataSync();
+            dataset[key] = {
+                data: Array.from(data),
+                shape: classifierDataset[key].shape
+            };
         }
+        
+        // Save to IndexedDB (unlimited storage!)
+        await saveModelToDB('carDetectorModel', dataset);
+        await saveModelToDB('carDetectorClasses', classes);
+        
+        console.log('[v11] ✅ Model auto-saved to IndexedDB');
+        
+        // Also try localStorage as backup (will fail silently if too large)
+        try {
+            localStorage.setItem('carDetectorClasses', JSON.stringify(classes));
+        } catch (e) {
+            console.warn('[v11] localStorage backup failed (model too large):', e.message);
+        }
+        
     } catch (error) {
-        console.error('Auto-save error:', error);
+        console.error('[v11] ❌ Auto-save failed:', error);
+        errorElement.textContent = 'Failed to save model';
     }
 }
 
