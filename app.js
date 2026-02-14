@@ -191,26 +191,6 @@ function requireSelectedModelIdForManagement() {
     return selectedId;
 }
 
-// v13: Helper to require selected model id (validates admin mode only)
-// v14: Kept for backward compatibility, but training operations no longer use this
-function requireSelectedModelId() {
-    if (!isAdminMode) {
-        alert('Admin access required');
-        console.log(`[${APP_VERSION}] Action blocked: admin access required`);
-        return null;
-    }
-    
-    const selectedId = getSelectedModelId();
-    if (!selectedId) {
-        alert('Сначала создайте или выберите модель в каталоге.');
-        console.log(`[${APP_VERSION}] Action blocked: no model selected`);
-        return null;
-    }
-    
-    // Sync currentModelId with UI selection
-    currentModelId = selectedId;
-    return selectedId;
-}
 
 // v11: Update model selector dropdown
 function updateModelSelect() {
@@ -1350,7 +1330,9 @@ async function startCapture(className) {
         return;
     }
     
-    // v14: No model selection required for training operations
+    // v14: Variant A workflow - Training operations (add class, take photo) work without model selection.
+    // Model selection is only required for persistence operations (save/load/rename/delete/export).
+    // Admin must explicitly create or select a model using the Create Model button to save trained data.
     
     // Verify video element (removed readyState check for iOS compatibility)
     if (!videoElement) {
