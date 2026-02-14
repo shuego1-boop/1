@@ -15,6 +15,9 @@ let modeSwitchTimeout = null;
 const STORAGE_KEY = 'myCarDetectorModel';
 const CONFIDENCE_THRESHOLD = 0.80;
 const APP_VERSION = 'v7';
+const IS_IOS = /iPhone|iPad|iPod/.test(navigator.userAgent);
+const IOS_VIDEO_READY_DELAY = 400; // iOS needs more time for video initialization
+const DEFAULT_VIDEO_READY_DELAY = 200;
 
 // UI Elements
 const trainingTab = document.getElementById('training-tab');
@@ -233,6 +236,14 @@ function deleteClass(className) {
 
 // Render classes
 function renderClasses() {
+    // iOS Safari: check if stream is still active or disconnected from video element
+    if (stream && videoElement && (!stream.active || videoElement.srcObject !== stream)) {
+        console.log('[MOBILE FIX] Stream lost or disconnected, reinitializing camera...');
+        initCamera().catch(err => {
+            console.error('[MOBILE FIX] Failed to reinit camera:', err);
+        });
+    }
+    
     classesContainer.innerHTML = '';
     
     Object.keys(classes).forEach(className => {
@@ -280,7 +291,27 @@ function renderClasses() {
         classesContainer.appendChild(card);
     });
     
-    // Add event listeners
+    // Remove ALL old listeners by cloning buttons (prevents accumulation on mobile)
+    // Preserve focus state for keyboard accessibility
+    const focusedElement = document.activeElement;
+    const focusedClass = focusedElement && focusedElement.classList.contains('capture-btn') 
+        ? focusedElement.dataset.class 
+        : null;
+    
+    document.querySelectorAll('.capture-btn').forEach(btn => {
+        const newBtn = btn.cloneNode(true);
+        btn.parentNode.replaceChild(newBtn, btn);
+    });
+    
+    // Restore focus if a capture button was focused
+    if (focusedClass) {
+        const btnToFocus = document.querySelector(`.capture-btn[data-class="${focusedClass}"]`);
+        if (btnToFocus) {
+            btnToFocus.focus();
+        }
+    }
+    
+    // Add event listeners to fresh buttons
     document.querySelectorAll('.capture-btn').forEach(btn => {
         const className = btn.dataset.class;
         
@@ -298,13 +329,29 @@ function renderClasses() {
     document.querySelectorAll('.delete-btn').forEach(btn => {
         btn.addEventListener('click', () => deleteClass(btn.dataset.class));
     });
+    
+    // iOS Safari fix: ensure video keeps playing after DOM manipulation
+    if (videoElement && videoElement.paused && videoElement.srcObject) {
+        console.log('[MOBILE FIX] Resuming video playback after DOM changes');
+        videoElement.play().catch(err => {
+            console.warn('[MOBILE FIX] Video autoplay prevented:', err);
+        });
+    }
 }
 
 // Capture logic
 let captureInterval = null;
 let isCapturing = false;
+let captureDebounceTimer = null;
+let currentCapturingClass = null;
 
 async function startCapture(className) {
+    // Check debounce timer for mobile touch events
+    if (captureDebounceTimer) {
+        console.log('[MOBILE FIX] Capture debounced');
+        return;
+    }
+    
     if (!className || !classes[className]) {
         console.error('Invalid class name for capture:', className);
         return;
@@ -315,11 +362,25 @@ async function startCapture(className) {
         return;
     }
     
-    if (isCapturing) {
+    // Prevent multiple simultaneous captures
+    if (isCapturing && currentCapturingClass !== className) {
+        // Already capturing a different class, stop the previous one
+        console.log(`[MOBILE FIX] Stopping previous capture of ${currentCapturingClass}`);
+        stopCapture();
+    } else if (isCapturing && currentCapturingClass === className) {
+        // Already capturing THIS class, ignore
+        console.log('[MOBILE FIX] Already capturing this class, ignoring');
         return;
     }
     
+    // Set debounce timer after all checks pass
+    captureDebounceTimer = setTimeout(() => {
+        captureDebounceTimer = null;
+    }, 150); // 150ms protection from double tap
+    
     isCapturing = true;
+    currentCapturingClass = className;
+    console.log(`[MOBILE FIX] Starting capture for ${className}`);
     
     const btn = document.querySelector(`.capture-btn[data-class="${className}"]`);
     if (btn) {
@@ -335,7 +396,8 @@ async function startCapture(className) {
         try {
             // Check video is ready - ensure it has actual pixel data
             if (!videoElement.videoWidth || !videoElement.videoHeight || videoElement.readyState < 2) {
-                captureInterval = setTimeout(captureFrame, 200);
+                const retryDelay = IS_IOS ? IOS_VIDEO_READY_DELAY : DEFAULT_VIDEO_READY_DELAY;
+                captureInterval = setTimeout(captureFrame, retryDelay);
                 return;
             }
             
@@ -366,7 +428,9 @@ async function startCapture(className) {
 }
 
 function stopCapture() {
+    console.log('[MOBILE FIX] Stopping capture');
     isCapturing = false;
+    currentCapturingClass = null;
     
     if (captureInterval) {
         clearTimeout(captureInterval);
@@ -378,8 +442,8 @@ function stopCapture() {
         btn.textContent = 'Захватить';
     });
     
-    // Auto-save after capturing
-    autoSave();
+    // Debounce auto-save to avoid blocking UI on mobile
+    setTimeout(() => autoSave(), 500);
 }
 
 // Recognition
