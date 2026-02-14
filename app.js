@@ -327,7 +327,6 @@ function updateManagementButtonStates() {
     exportModelBtn.disabled = !hasSelection;
     loadModelBtn.disabled = !hasSelection;
 }
-}
 
 // v12: Format Firebase auth errors with user-friendly messages
 function formatFirebaseAuthError(error) {
