@@ -359,7 +359,7 @@ async function startCapture(className) {
     
     // CRITICAL: Verify stream is active before ANYTHING
     if (!stream || !stream.active) {
-        console.error('[v9] Stream not active! Current state:', {
+        console.error('[v10] Stream not active! Current state:', {
             streamExists: !!stream,
             streamActive: stream?.active,
             videoSrc: !!videoElement?.srcObject
@@ -372,7 +372,7 @@ async function startCapture(className) {
     
     // Verify video element (removed readyState check for iOS compatibility)
     if (!videoElement) {
-        console.error('[v9] Video element not found');
+        console.error('[v10] Video element not found');
         errorElement.textContent = '⚠️ Видео не готово. Подождите или перезапустите камеру.';
         return;
     }
@@ -428,20 +428,20 @@ async function startCapture(className) {
         try {
             // iOS Safari aggressive fix - skip readyState check entirely
             if (!videoElement || !videoElement.videoWidth || !videoElement.videoHeight) {
-                console.warn('[v9] Video not ready, retrying...');
+                console.warn('[v10] Video not ready, retrying...');
                 captureInterval = setTimeout(captureFrame, 200);
                 return;
             }
             
             // iOS Safari: Force check that video is actually playing
             if (videoElement.paused) {
-                console.warn('[v9] Video paused, attempting to play...');
-                videoElement.play().catch(err => console.error('[v9] Play failed:', err));
+                console.warn('[v10] Video paused, attempting to play...');
+                videoElement.play().catch(err => console.error('[v10] Play failed:', err));
                 captureInterval = setTimeout(captureFrame, 200);
                 return;
             }
             
-            console.log('[v9] ✅ Capturing frame, video:', videoElement.videoWidth, 'x', videoElement.videoHeight);
+            console.log('[v10] ✅ Capturing frame, video:', videoElement.videoWidth, 'x', videoElement.videoHeight);
             
             const img = tf.browser.fromPixels(videoElement);
             const activation = mobilenetModel.infer(img, true);
@@ -834,7 +834,7 @@ flipCameraBtn.addEventListener('click', flipCamera);
 
 // Restart camera button handler
 async function restartCamera() {
-    console.log('[v9] Manual camera restart requested');
+    console.log('[v10] Manual camera restart requested');
     
     restartCameraBtn.disabled = true;
     restartCameraBtn.textContent = '⏳ Перезапуск...';
@@ -847,7 +847,7 @@ async function restartCamera() {
         // Stop old stream
         if (stream) {
             stream.getTracks().forEach(track => {
-                console.log('[v9] Stopping track:', track.kind);
+                console.log('[v10] Stopping track:', track.kind);
                 track.stop();
             });
         }
@@ -868,7 +868,7 @@ async function restartCamera() {
         restartCameraBtn.classList.remove('pulse');
         
     } catch (error) {
-        console.error('[v9] Restart failed:', error);
+        console.error('[v10] Restart failed:', error);
         alert('❌ Не удалось перезапустить: ' + error.message);
         restartCameraBtn.textContent = '⚠️ Попробовать ещё раз';
     } finally {
