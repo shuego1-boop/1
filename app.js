@@ -28,7 +28,7 @@ const STORAGE_KEY = 'myCarDetectorModel';
 const DATASET_STORAGE_KEY = 'carDetectorDataset';
 const CONFIDENCE_THRESHOLD = 0.70; // v11: Changed to 0.7 for "Не распознано"
 const HIGH_CONFIDENCE_THRESHOLD = 0.90;
-const APP_VERSION = 'v11';
+const APP_VERSION = 'v12';
 const IS_IOS = /iPhone|iPad|iPod/.test(navigator.userAgent);
 const IOS_VIDEO_READY_DELAY = 400; // iOS needs more time for video initialization
 const DEFAULT_VIDEO_READY_DELAY = 200;
@@ -97,6 +97,9 @@ function initFirebase() {
         storage = firebase.storage();
         
         console.log(`[${APP_VERSION}] Firebase initialized`);
+        console.log(`[${APP_VERSION}] Project ID: ${firebaseConfig.projectId}`);
+        console.log(`[${APP_VERSION}] Auth Domain: ${firebaseConfig.authDomain}`);
+        console.log(`[${APP_VERSION}] Storage Bucket: ${firebaseConfig.storageBucket}`);
         
         // Listen for auth state changes
         auth.onAuthStateChanged(handleAuthStateChange);
@@ -182,7 +185,28 @@ function updateModelSelect() {
     });
 }
 
-// v11: Update admin UI state
+// v12: Set mode UI - controls visibility of admin-only sections
+function setModeUI(isAdmin) {
+    const adminWrappers = document.querySelectorAll('.admin-only-wrapper');
+    
+    if (isAdmin) {
+        // Show all admin-only sections
+        adminWrappers.forEach(wrapper => {
+            wrapper.style.display = '';
+        });
+        // Switch to training mode by default for admins
+        switchMode('training');
+    } else {
+        // Hide all admin-only sections
+        adminWrappers.forEach(wrapper => {
+            wrapper.style.display = 'none';
+        });
+        // Force recognition mode for public users
+        switchMode('recognition');
+    }
+}
+
+// v12: Update admin UI state
 function updateAdminUI() {
     if (isAdminMode) {
         modeStatus.textContent = 'Admin mode';
@@ -198,6 +222,9 @@ function updateAdminUI() {
         saveModelBtn.disabled = false;
         renameModelBtn.disabled = false;
         deleteModelBtn.disabled = false;
+        
+        // Show admin-only UI sections
+        setModeUI(true);
     } else {
         modeStatus.textContent = 'Public mode';
         modeStatus.classList.remove('admin-active');
@@ -211,7 +238,31 @@ function updateAdminUI() {
         saveModelBtn.disabled = true;
         renameModelBtn.disabled = true;
         deleteModelBtn.disabled = true;
+        
+        // Hide admin-only UI sections
+        setModeUI(false);
     }
+}
+
+// v12: Format Firebase auth errors with user-friendly messages
+function formatFirebaseAuthError(error) {
+    const code = error.code || '';
+    
+    // Map error codes to user-friendly Russian messages
+    const errorMessages = {
+        'auth/invalid-login-credentials': 'Неверный email или пароль',
+        'auth/user-not-found': 'Пользователь не найден',
+        'auth/wrong-password': 'Неверный пароль',
+        'auth/user-disabled': 'Учетная запись отключена',
+        'auth/too-many-requests': 'Слишком много попыток входа. Попробуйте позже',
+        'auth/network-request-failed': 'Ошибка сети. Проверьте подключение к интернету',
+        'auth/invalid-email': 'Неверный формат email',
+        'auth/user-token-expired': 'Сессия истекла. Войдите снова',
+        'auth/requires-recent-login': 'Требуется повторный вход'
+    };
+    
+    const friendlyMessage = errorMessages[code] || `Ошибка входа: ${error.message}`;
+    return `${friendlyMessage} (${code})`;
 }
 
 // v11: Show login error
@@ -222,18 +273,18 @@ function showLoginError(message) {
     }, 5000);
 }
 
-// v11: Admin login
+// v12: Admin login with improved error handling
 async function adminLogin() {
     const email = adminEmail.value.trim();
     const password = adminPassword.value;
     
     if (!email || !password) {
-        showLoginError('Please enter email and password');
+        showLoginError('Введите email и пароль');
         return;
     }
     
     loginBtn.disabled = true;
-    loginBtn.textContent = 'Logging in...';
+    loginBtn.textContent = 'Вход...';
     loginError.textContent = '';
     
     try {
@@ -242,11 +293,13 @@ async function adminLogin() {
         adminEmail.value = '';
         adminPassword.value = '';
     } catch (error) {
+        console.error(`[${APP_VERSION}] Login error code:`, error.code);
         console.error(`[${APP_VERSION}] Login error:`, error);
-        showLoginError('Login failed: ' + error.message);
+        const formattedError = formatFirebaseAuthError(error);
+        showLoginError(formattedError);
     } finally {
         loginBtn.disabled = false;
-        loginBtn.textContent = 'Login';
+        loginBtn.textContent = 'Войти';
     }
 }
 
@@ -260,7 +313,7 @@ async function adminLogout() {
     }
 }
 
-// v11: Open/close admin modal
+// v12: Open/close admin modal
 function openAdminModal() {
     if (isAdminMode) {
         // If already admin, open to show admin panel
@@ -268,6 +321,13 @@ function openAdminModal() {
     } else {
         // If not admin, open to show login form
         adminModal.classList.add('active');
+        
+        // Populate Firebase diagnostics
+        const diagProjectId = document.getElementById('diag-project-id');
+        const diagAuthDomain = document.getElementById('diag-auth-domain');
+        if (diagProjectId) diagProjectId.textContent = firebaseConfig.projectId;
+        if (diagAuthDomain) diagAuthDomain.textContent = firebaseConfig.authDomain;
+        
         adminEmail.focus();
     }
 }
@@ -802,6 +862,12 @@ async function flipCamera() {
 
 // Mode switching
 function switchMode(mode) {
+    // v12: Prevent switching to training mode in public mode
+    if (mode === 'training' && !isAdminMode) {
+        console.log(`[${APP_VERSION}] Training mode blocked: admin access required`);
+        return;
+    }
+    
     currentMode = mode;
     
     // Always stop recognition first
@@ -837,8 +903,14 @@ function switchMode(mode) {
     }
 }
 
-// Class management
+// v12: Class management (admin only)
 function addClassPrompt() {
+    // v12: Block in public mode
+    if (!isAdminMode) {
+        alert('Admin access required');
+        return;
+    }
+    
     const className = prompt('Введите название класса:', '');
     
     if (className && className.trim()) {
@@ -995,6 +1067,12 @@ let currentCapturingClass = null;
 let flashTimeout = null;
 
 async function startCapture(className) {
+    // v12: Block in public mode
+    if (!isAdminMode) {
+        console.log(`[${APP_VERSION}] Capture blocked: admin access required`);
+        return;
+    }
+    
     console.log('🎬 Starting capture for:', className);
     console.log('📹 Video readyState:', videoElement?.readyState);
     console.log('📐 Video dimensions:', videoElement?.videoWidth, 'x', videoElement?.videoHeight);
