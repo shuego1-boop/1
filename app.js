@@ -13,14 +13,37 @@ let modeSwitchTimeout = null;
 let isDOMManipulationSafe = true;
 let selectedClass = null; // Currently selected class for capture
 
+// v11: Firebase state
+let isAdminMode = false;
+let currentUser = null;
+let db = null;
+let storage = null;
+let auth = null;
+let modelCatalog = [];
+let currentModelId = null;
+let autosaveTimeout = null;
+
 // Constants
 const STORAGE_KEY = 'myCarDetectorModel';
 const DATASET_STORAGE_KEY = 'carDetectorDataset';
-const CONFIDENCE_THRESHOLD = 0.80;
-const APP_VERSION = 'v10';
+const CONFIDENCE_THRESHOLD = 0.70; // v11: Changed to 0.7 for "Не распознано"
+const HIGH_CONFIDENCE_THRESHOLD = 0.90;
+const APP_VERSION = 'v11';
 const IS_IOS = /iPhone|iPad|iPod/.test(navigator.userAgent);
 const IOS_VIDEO_READY_DELAY = 400; // iOS needs more time for video initialization
 const DEFAULT_VIDEO_READY_DELAY = 200;
+const AUTOSAVE_DEBOUNCE_MS = 2000;
+
+// v11: Firebase Configuration
+const firebaseConfig = {
+    apiKey: "AIzaSyDUX-p3RKcnWXMIHF0Ofk5m7LupxdU9nZU",
+    authDomain: "raspozn-ef99a.firebaseapp.com",
+    projectId: "raspozn-ef99a",
+    storageBucket: "raspozn-ef99a.firebasestorage.app",
+    messagingSenderId: "978235404466",
+    appId: "1:978235404466:web:bc11571d676cdb55f719ab",
+    measurementId: "G-QBF2TE3M9Q"
+};
 
 // UI Elements
 const trainingTab = document.getElementById('training-tab');
@@ -38,10 +61,627 @@ const flipCameraBtn = document.getElementById('flip-camera-btn');
 const restartCameraBtn = document.getElementById('restart-camera-btn');
 const errorElement = document.getElementById('error');
 
+// v11: New UI elements
+const adminBtn = document.getElementById('admin-btn');
+const adminModal = document.getElementById('admin-modal');
+const closeModalBtn = document.getElementById('close-modal-btn');
+const loginBtn = document.getElementById('login-btn');
+const logoutBtn = document.getElementById('logout-btn');
+const adminEmail = document.getElementById('admin-email');
+const adminPassword = document.getElementById('admin-password');
+const adminLoginForm = document.getElementById('admin-login-form');
+const adminPanel = document.getElementById('admin-panel');
+const loginError = document.getElementById('login-error');
+const modeStatus = document.getElementById('mode-status');
+const modelSelect = document.getElementById('model-select');
+const exportModelBtn = document.getElementById('export-model-btn');
+const renameModelBtn = document.getElementById('rename-model-btn');
+const deleteModelBtn = document.getElementById('delete-model-btn');
+const initDefaultsBtn = document.getElementById('init-defaults-btn');
+const adminEmailDisplay = document.getElementById('admin-email-display');
+
+// v11: Initialize Firebase
+function initFirebase() {
+    try {
+        if (typeof firebase === 'undefined') {
+            throw new Error('Firebase SDK not loaded');
+        }
+        
+        firebase.initializeApp(firebaseConfig);
+        auth = firebase.auth();
+        db = firebase.firestore();
+        storage = firebase.storage();
+        
+        console.log(`[${APP_VERSION}] Firebase initialized`);
+        
+        // Listen for auth state changes
+        auth.onAuthStateChanged(handleAuthStateChange);
+        
+        return true;
+    } catch (error) {
+        console.error(`[${APP_VERSION}] Firebase initialization error:`, error);
+        return false;
+    }
+}
+
+// v11: Auth state change handler
+async function handleAuthStateChange(user) {
+    currentUser = user;
+    console.log(`[${APP_VERSION}] Auth state changed:`, user ? user.email : 'signed out');
+    
+    if (user) {
+        // Check if user is admin
+        try {
+            const adminDoc = await db.collection('admins').doc(user.uid).get();
+            if (adminDoc.exists && adminDoc.data().enabled) {
+                isAdminMode = true;
+                updateAdminUI();
+                console.log(`[${APP_VERSION}] Admin mode enabled for ${user.email}`);
+            } else {
+                // Not an admin, sign out
+                console.warn(`[${APP_VERSION}] User ${user.email} is not an admin`);
+                isAdminMode = false;
+                await auth.signOut();
+                showLoginError('Access denied. You are not an admin.');
+            }
+        } catch (error) {
+            console.error(`[${APP_VERSION}] Error checking admin status:`, error);
+            isAdminMode = false;
+            await auth.signOut();
+            showLoginError('Error verifying admin status.');
+        }
+    } else {
+        isAdminMode = false;
+        updateAdminUI();
+    }
+}
+
+// v11: Load model catalog from Firestore
+async function loadModelCatalog() {
+    try {
+        const snapshot = await db.collection('models').orderBy('updatedAt', 'desc').get();
+        modelCatalog = snapshot.docs.map(doc => ({
+            id: doc.id,
+            ...doc.data()
+        }));
+        
+        console.log(`[${APP_VERSION}] Loaded ${modelCatalog.length} models from catalog`);
+        updateModelSelect();
+        return modelCatalog;
+    } catch (error) {
+        console.error(`[${APP_VERSION}] Error loading model catalog:`, error);
+        errorElement.textContent = 'Error loading model catalog: ' + error.message;
+        return [];
+    }
+}
+
+// v11: Update model selector dropdown
+function updateModelSelect() {
+    modelSelect.innerHTML = '';
+    
+    if (modelCatalog.length === 0) {
+        const option = document.createElement('option');
+        option.value = '';
+        option.textContent = isAdminMode ? 'No models - Initialize defaults' : 'No models available';
+        modelSelect.appendChild(option);
+        return;
+    }
+    
+    modelCatalog.forEach(model => {
+        const option = document.createElement('option');
+        option.value = model.id;
+        option.textContent = `${model.name} (${model.classesCount || 0} classes, ${model.examplesCount || 0} examples)`;
+        if (model.id === currentModelId) {
+            option.selected = true;
+        }
+        modelSelect.appendChild(option);
+    });
+}
+
+// v11: Update admin UI state
+function updateAdminUI() {
+    if (isAdminMode) {
+        modeStatus.textContent = 'Admin mode';
+        modeStatus.classList.add('admin-active');
+        adminBtn.textContent = '🔓 Logout';
+        
+        // Show admin panel, hide login form
+        adminLoginForm.style.display = 'none';
+        adminPanel.style.display = 'block';
+        adminEmailDisplay.textContent = currentUser.email;
+        
+        // Enable admin-only buttons
+        saveModelBtn.disabled = false;
+        renameModelBtn.disabled = false;
+        deleteModelBtn.disabled = false;
+    } else {
+        modeStatus.textContent = 'Public mode';
+        modeStatus.classList.remove('admin-active');
+        adminBtn.textContent = '🔐 Admin';
+        
+        // Show login form, hide admin panel
+        adminLoginForm.style.display = 'block';
+        adminPanel.style.display = 'none';
+        
+        // Disable admin-only buttons
+        saveModelBtn.disabled = true;
+        renameModelBtn.disabled = true;
+        deleteModelBtn.disabled = true;
+    }
+}
+
+// v11: Show login error
+function showLoginError(message) {
+    loginError.textContent = message;
+    setTimeout(() => {
+        loginError.textContent = '';
+    }, 5000);
+}
+
+// v11: Admin login
+async function adminLogin() {
+    const email = adminEmail.value.trim();
+    const password = adminPassword.value;
+    
+    if (!email || !password) {
+        showLoginError('Please enter email and password');
+        return;
+    }
+    
+    loginBtn.disabled = true;
+    loginBtn.textContent = 'Logging in...';
+    loginError.textContent = '';
+    
+    try {
+        await auth.signInWithEmailAndPassword(email, password);
+        // Auth state change handler will check admin status
+        adminEmail.value = '';
+        adminPassword.value = '';
+    } catch (error) {
+        console.error(`[${APP_VERSION}] Login error:`, error);
+        showLoginError('Login failed: ' + error.message);
+    } finally {
+        loginBtn.disabled = false;
+        loginBtn.textContent = 'Login';
+    }
+}
+
+// v11: Admin logout
+async function adminLogout() {
+    try {
+        await auth.signOut();
+        closeAdminModal();
+    } catch (error) {
+        console.error(`[${APP_VERSION}] Logout error:`, error);
+    }
+}
+
+// v11: Open/close admin modal
+function openAdminModal() {
+    if (isAdminMode) {
+        // If already admin, open to show admin panel
+        adminModal.classList.add('active');
+    } else {
+        // If not admin, open to show login form
+        adminModal.classList.add('active');
+        adminEmail.focus();
+    }
+}
+
+function closeAdminModal() {
+    adminModal.classList.remove('active');
+    loginError.textContent = '';
+}
+
+// v11: Initialize default models (admin only)
+async function initializeDefaultModels() {
+    if (!isAdminMode) {
+        alert('Admin access required');
+        return;
+    }
+    
+    if (!confirm('Initialize 10 default model documents in Firestore? This will create empty model entries.')) {
+        return;
+    }
+    
+    initDefaultsBtn.disabled = true;
+    initDefaultsBtn.textContent = 'Initializing...';
+    
+    try {
+        const batch = db.batch();
+        
+        for (let i = 1; i <= 10; i++) {
+            const modelId = `model-${i}`;
+            const modelRef = db.collection('models').doc(modelId);
+            batch.set(modelRef, {
+                name: `Model ${i}`,
+                storagePath: `models/${modelId}/dataset.json`,
+                format: 'knn-mobilenet-v1',
+                updatedAt: firebase.firestore.FieldValue.serverTimestamp(),
+                sizeBytes: 0,
+                classesCount: 0,
+                examplesCount: 0,
+                appVersion: APP_VERSION
+            });
+        }
+        
+        await batch.commit();
+        console.log(`[${APP_VERSION}] Initialized 10 default models`);
+        alert('✅ Default models initialized!');
+        
+        // Reload catalog
+        await loadModelCatalog();
+    } catch (error) {
+        console.error(`[${APP_VERSION}] Error initializing defaults:`, error);
+        alert('Error initializing defaults: ' + error.message);
+    } finally {
+        initDefaultsBtn.disabled = false;
+        initDefaultsBtn.textContent = 'Initialize Default Models';
+    }
+}
+
+// v11: Save model to Firebase Storage and Firestore
+async function saveModelToFirebase() {
+    if (!isAdminMode) {
+        alert('Admin access required to save models');
+        return;
+    }
+    
+    try {
+        const numClasses = classifier.getNumClasses();
+        
+        if (numClasses === 0) {
+            alert('Nothing to save - model not trained');
+            return;
+        }
+        
+        const selectedModelId = modelSelect.value;
+        if (!selectedModelId) {
+            alert('Please select a model from the catalog');
+            return;
+        }
+        
+        saveModelBtn.disabled = true;
+        saveModelBtn.textContent = '💾 Saving...';
+        errorElement.textContent = 'Saving model to Firebase...';
+        
+        // Serialize classifier dataset
+        const dataset = classifier.getClassifierDataset();
+        const datasetObj = {};
+        
+        Object.keys(dataset).forEach((className) => {
+            const tensorData = dataset[className];
+            datasetObj[className] = {
+                shape: Array.from(tensorData.shape),
+                data: Array.from(tensorData.dataSync())
+            };
+        });
+        
+        // Create model JSON
+        const modelData = {
+            format: 'knn-mobilenet-v1',
+            createdAt: new Date().toISOString(),
+            updatedAt: new Date().toISOString(),
+            appVersion: APP_VERSION,
+            classes: classes,
+            dataset: datasetObj
+        };
+        
+        const modelJson = JSON.stringify(modelData);
+        const sizeBytes = modelJson.length;
+        const sizeMB = (sizeBytes / (1024 * 1024)).toFixed(2);
+        
+        console.log(`[${APP_VERSION}] Uploading model ${selectedModelId}, size: ${sizeMB} MB`);
+        
+        // Upload to Firebase Storage
+        const storagePath = `models/${selectedModelId}/dataset.json`;
+        const storageRef = storage.ref(storagePath);
+        
+        await storageRef.putString(modelJson, 'raw', {
+            contentType: 'application/json'
+        });
+        
+        console.log(`[${APP_VERSION}] Model uploaded to Storage`);
+        
+        // Update Firestore metadata
+        await db.collection('models').doc(selectedModelId).update({
+            storagePath: storagePath,
+            updatedAt: firebase.firestore.FieldValue.serverTimestamp(),
+            sizeBytes: sizeBytes,
+            classesCount: Object.keys(classes).length,
+            examplesCount: Object.values(classes).reduce((sum, cls) => sum + cls.examples, 0),
+            appVersion: APP_VERSION
+        });
+        
+        console.log(`[${APP_VERSION}] Firestore metadata updated`);
+        
+        currentModelId = selectedModelId;
+        errorElement.textContent = `✅ Model saved! (${sizeMB} MB)`;
+        setTimeout(() => { errorElement.textContent = ''; }, 3000);
+        
+        // Reload catalog to get updated metadata
+        await loadModelCatalog();
+        
+    } catch (error) {
+        console.error(`[${APP_VERSION}] Save to Firebase error:`, error);
+        errorElement.textContent = 'Error saving model: ' + error.message;
+        alert('Error saving model: ' + error.message);
+    } finally {
+        saveModelBtn.disabled = false;
+        saveModelBtn.textContent = '💾 Save to Server';
+    }
+}
+
+// v11: Load model from Firebase Storage
+async function loadModelFromFirebase() {
+    try {
+        const selectedModelId = modelSelect.value;
+        if (!selectedModelId) {
+            alert('Please select a model from the catalog');
+            return;
+        }
+        
+        loadModelBtn.disabled = true;
+        loadModelBtn.textContent = '📂 Loading...';
+        errorElement.textContent = 'Loading model from Firebase...';
+        
+        // Get model metadata
+        const modelDoc = await db.collection('models').doc(selectedModelId).get();
+        if (!modelDoc.exists) {
+            throw new Error('Model not found in catalog');
+        }
+        
+        const modelMeta = modelDoc.data();
+        const storagePath = modelMeta.storagePath || `models/${selectedModelId}/dataset.json`;
+        
+        console.log(`[${APP_VERSION}] Loading model from ${storagePath}`);
+        
+        // Download from Storage
+        const storageRef = storage.ref(storagePath);
+        const downloadURL = await storageRef.getDownloadURL();
+        
+        const response = await fetch(downloadURL);
+        if (!response.ok) {
+            throw new Error(`HTTP ${response.status}: ${response.statusText}`);
+        }
+        
+        const modelData = await response.json();
+        
+        console.log(`[${APP_VERSION}] Model data downloaded, format: ${modelData.format}`);
+        
+        // Clear existing classifier
+        if (classifier) {
+            classifier.clearAllClasses();
+        }
+        
+        classes = modelData.classes || {};
+        
+        // Restore classifier dataset
+        const dataset = modelData.dataset || {};
+        Object.keys(dataset).forEach((className) => {
+            try {
+                const classData = dataset[className];
+                if (!classData.shape || !classData.data) {
+                    console.warn(`[${APP_VERSION}] Invalid data for class ${className}`);
+                    return;
+                }
+                
+                const tensor = tf.tensor(classData.data, classData.shape);
+                classifier.addExample(tensor, className);
+                tensor.dispose();
+            } catch (error) {
+                console.error(`[${APP_VERSION}] Error restoring class ${className}:`, error);
+                // Shape mismatch - clear and prompt user
+                if (error.message.includes('shape')) {
+                    classifier.clearAllClasses();
+                    classes = {};
+                    throw new Error('Shape mismatch detected. Model cleared. Please retrain.');
+                }
+            }
+        });
+        
+        // Verify example counts
+        const classifierDataset = classifier.getClassifierDataset();
+        Object.keys(classes).forEach((className) => {
+            if (classifierDataset[className]) {
+                const actualExamples = classifierDataset[className].shape[0];
+                classes[className].examples = actualExamples;
+            } else {
+                classes[className].examples = 0;
+            }
+        });
+        
+        currentModelId = selectedModelId;
+        renderClasses();
+        
+        const sizeMB = (modelMeta.sizeBytes / (1024 * 1024)).toFixed(2);
+        errorElement.textContent = `✅ Model loaded! (${sizeMB} MB)`;
+        setTimeout(() => { errorElement.textContent = ''; }, 3000);
+        
+        console.log(`[${APP_VERSION}] Model ${selectedModelId} loaded successfully`);
+        
+    } catch (error) {
+        console.error(`[${APP_VERSION}] Load from Firebase error:`, error);
+        errorElement.textContent = 'Error loading model: ' + error.message;
+        alert('Error loading model: ' + error.message);
+    } finally {
+        loadModelBtn.disabled = false;
+        loadModelBtn.textContent = '📂 Load Model';
+    }
+}
+
+// v11: Export model as JSON download
+function exportModel() {
+    try {
+        const numClasses = classifier.getNumClasses();
+        
+        if (numClasses === 0) {
+            alert('Nothing to export - model not trained');
+            return;
+        }
+        
+        // Serialize classifier dataset
+        const dataset = classifier.getClassifierDataset();
+        const datasetObj = {};
+        
+        Object.keys(dataset).forEach((className) => {
+            const tensorData = dataset[className];
+            datasetObj[className] = {
+                shape: Array.from(tensorData.shape),
+                data: Array.from(tensorData.dataSync())
+            };
+        });
+        
+        const modelData = {
+            format: 'knn-mobilenet-v1',
+            createdAt: new Date().toISOString(),
+            updatedAt: new Date().toISOString(),
+            appVersion: APP_VERSION,
+            classes: classes,
+            dataset: datasetObj
+        };
+        
+        const modelJson = JSON.stringify(modelData, null, 2);
+        const blob = new Blob([modelJson], { type: 'application/json' });
+        const url = URL.createObjectURL(blob);
+        
+        const a = document.createElement('a');
+        a.href = url;
+        a.download = `model-${currentModelId || 'export'}-${Date.now()}.json`;
+        document.body.appendChild(a);
+        a.click();
+        document.body.removeChild(a);
+        URL.revokeObjectURL(url);
+        
+        const sizeMB = (modelJson.length / (1024 * 1024)).toFixed(2);
+        errorElement.textContent = `✅ Model exported! (${sizeMB} MB)`;
+        setTimeout(() => { errorElement.textContent = ''; }, 3000);
+        
+    } catch (error) {
+        console.error(`[${APP_VERSION}] Export error:`, error);
+        alert('Error exporting model: ' + error.message);
+    }
+}
+
+// v11: Rename model (admin only)
+async function renameModel() {
+    if (!isAdminMode) {
+        alert('Admin access required');
+        return;
+    }
+    
+    const selectedModelId = modelSelect.value;
+    if (!selectedModelId) {
+        alert('Please select a model from the catalog');
+        return;
+    }
+    
+    const currentName = modelCatalog.find(m => m.id === selectedModelId)?.name || '';
+    const newName = prompt('Enter new model name:', currentName);
+    
+    if (!newName || newName === currentName) {
+        return;
+    }
+    
+    try {
+        await db.collection('models').doc(selectedModelId).update({
+            name: newName,
+            updatedAt: firebase.firestore.FieldValue.serverTimestamp()
+        });
+        
+        console.log(`[${APP_VERSION}] Model ${selectedModelId} renamed to "${newName}"`);
+        errorElement.textContent = '✅ Model renamed!';
+        setTimeout(() => { errorElement.textContent = ''; }, 2000);
+        
+        await loadModelCatalog();
+    } catch (error) {
+        console.error(`[${APP_VERSION}] Rename error:`, error);
+        alert('Error renaming model: ' + error.message);
+    }
+}
+
+// v11: Delete model (admin only)
+async function deleteModel() {
+    if (!isAdminMode) {
+        alert('Admin access required');
+        return;
+    }
+    
+    const selectedModelId = modelSelect.value;
+    if (!selectedModelId) {
+        alert('Please select a model from the catalog');
+        return;
+    }
+    
+    const modelName = modelCatalog.find(m => m.id === selectedModelId)?.name || selectedModelId;
+    
+    if (!confirm(`Delete model "${modelName}"? This will remove the model from Storage and Firestore.`)) {
+        return;
+    }
+    
+    try {
+        deleteModelBtn.disabled = true;
+        deleteModelBtn.textContent = '🗑️ Deleting...';
+        
+        // Delete from Storage
+        const storagePath = `models/${selectedModelId}/dataset.json`;
+        const storageRef = storage.ref(storagePath);
+        
+        try {
+            await storageRef.delete();
+            console.log(`[${APP_VERSION}] Deleted from Storage: ${storagePath}`);
+        } catch (storageError) {
+            // File might not exist, continue anyway
+            console.warn(`[${APP_VERSION}] Storage delete warning:`, storageError);
+        }
+        
+        // Delete from Firestore
+        await db.collection('models').doc(selectedModelId).delete();
+        console.log(`[${APP_VERSION}] Deleted from Firestore: ${selectedModelId}`);
+        
+        errorElement.textContent = '✅ Model deleted!';
+        setTimeout(() => { errorElement.textContent = ''; }, 2000);
+        
+        if (currentModelId === selectedModelId) {
+            currentModelId = null;
+        }
+        
+        await loadModelCatalog();
+        
+    } catch (error) {
+        console.error(`[${APP_VERSION}] Delete error:`, error);
+        alert('Error deleting model: ' + error.message);
+    } finally {
+        deleteModelBtn.disabled = false;
+        deleteModelBtn.textContent = '🗑️ Delete';
+    }
+}
+
+// v11: Autosave with debounce (admin only)
+function scheduleAutosave() {
+    if (!isAdminMode) {
+        return; // No autosave in public mode
+    }
+    
+    // Clear existing timeout
+    if (autosaveTimeout) {
+        clearTimeout(autosaveTimeout);
+    }
+    
+    // Schedule new autosave
+    autosaveTimeout = setTimeout(() => {
+        console.log(`[${APP_VERSION}] Autosaving...`);
+        saveModelToFirebase();
+    }, AUTOSAVE_DEBOUNCE_MS);
+}
+
 // Initialize on page load
 async function init() {
     try {
         errorElement.textContent = 'Загрузка моделей...';
+        
+        // v11: Initialize Firebase first
+        initFirebase();
         
         // Check TensorFlow availability with retry logic
         let retries = 0;
@@ -66,22 +706,19 @@ async function init() {
         // Initialize camera
         await initCamera();
         
+        // v11: Load model catalog from Firestore
+        await loadModelCatalog();
+        
         errorElement.textContent = '';
         console.log(`🚗 My Car Detector ${APP_VERSION} loaded`);
         
-        // v9: Add detailed startup logs
         console.log(`[${APP_VERSION}] 📱 User Agent:`, navigator.userAgent);
         console.log(`[${APP_VERSION}] 🎥 Video element:`, !!videoElement);
         console.log(`[${APP_VERSION}] 📹 Stream active:`, stream?.active);
-        console.log(`[${APP_VERSION}] iOS Safari fixes applied:
-   - Video isolated in separate container
-   - No innerHTML manipulation
-   - Manual restart button added
-   - Enhanced stream monitoring
-`);
+        console.log(`[${APP_VERSION}] Firebase enabled with public read, admin write`);
         
-        // Try to load saved model
-        loadModelFromStorage();
+        // Setup event listeners
+        setupEventListeners();
         
     } catch (error) {
         console.error('Initialization error:', error);
@@ -430,20 +1067,20 @@ async function startCapture(className) {
         try {
             // iOS Safari aggressive fix - skip readyState check entirely
             if (!videoElement || !videoElement.videoWidth || !videoElement.videoHeight) {
-                console.warn('[v10] Video not ready, retrying...');
+                console.warn(`[${APP_VERSION}] Video not ready, retrying...`);
                 captureInterval = setTimeout(captureFrame, 200);
                 return;
             }
             
             // iOS Safari: Force check that video is actually playing
             if (videoElement.paused) {
-                console.warn('[v10] Video paused, attempting to play...');
-                videoElement.play().catch(err => console.error('[v10] Play failed:', err));
+                console.warn(`[${APP_VERSION}] Video paused, attempting to play...`);
+                videoElement.play().catch(err => console.error(`[${APP_VERSION}] Play failed:`, err));
                 captureInterval = setTimeout(captureFrame, 200);
                 return;
             }
             
-            console.log('[v10] ✅ Capturing frame, video:', videoElement.videoWidth, 'x', videoElement.videoHeight);
+            console.log(`[${APP_VERSION}] ✅ Capturing frame, video:`, videoElement.videoWidth, 'x', videoElement.videoHeight);
             
             const img = tf.browser.fromPixels(videoElement);
             const activation = mobilenetModel.infer(img, true);
@@ -452,7 +1089,7 @@ async function startCapture(className) {
                 classifier.addExample(activation, className);
             } catch (error) {
                 if (error.message && error.message.includes('shape')) {
-                    console.warn('[v10] ⚠️ Shape mismatch detected - recreating classifier');
+                    console.warn(`[${APP_VERSION}] ⚠️ Shape mismatch detected - recreating classifier`);
                     
                     // Dispose old classifier
                     classifier.dispose();
@@ -472,7 +1109,7 @@ async function startCapture(className) {
                     // Try again with fresh classifier
                     classifier.addExample(activation, className);
                     
-                    console.log('[v10] ✅ Classifier recreated successfully');
+                    console.log(`[${APP_VERSION}] ✅ Classifier recreated successfully`);
                 } else {
                     throw error; // Re-throw if not shape error
                 }
@@ -499,7 +1136,7 @@ async function startCapture(className) {
             }
             
             // v10: Console log for debugging
-            console.log(`[v10] 📸 Frame captured! ${className} now has ${classes[className].examples} examples`);
+            console.log(`[${APP_VERSION}] 📸 Frame captured! ${className} now has ${classes[className].examples} examples`);
             
             // Update UI - find the label for the selected class in the radio button list
             const labels = document.querySelectorAll('#class-list label');
@@ -521,7 +1158,7 @@ async function startCapture(className) {
 }
 
 function stopCapture() {
-    console.log('[v10] Stopping capture');
+    console.log(`[${APP_VERSION}] Stopping capture`);
     isCapturing = false;
     isDOMManipulationSafe = true;
     currentCapturingClass = null;
@@ -537,8 +1174,8 @@ function stopCapture() {
         btn.style.background = 'linear-gradient(135deg, #58a6ff 0%, #1f6feb 100%)';
     }
     
-    // Debounce auto-save to avoid blocking UI on mobile
-    setTimeout(() => autoSave(), 500);
+    // v11: Schedule autosave (admin only, debounced)
+    scheduleAutosave();
 }
 
 // Recognition
@@ -610,16 +1247,23 @@ async function predict() {
             const confidence = prediction.confidences[predictedClass];
             const confidencePercent = Math.round(confidence * 100);
             
-            resultOverlay.textContent = `${predictedClass} (${confidencePercent}%)`;
-            
-            if (confidence >= CONFIDENCE_THRESHOLD) {
-                resultOverlay.className = 'result-overlay high-confidence';
+            // v11: Show "Не распознано" when confidence below threshold
+            if (confidence < CONFIDENCE_THRESHOLD) {
+                resultOverlay.textContent = `Не распознано (${confidencePercent}%)`;
+                resultOverlay.className = 'result-overlay unknown';
+                recognitionStatus.textContent = `Последнее: Не распознано (${confidencePercent}%)`;
             } else {
-                resultOverlay.className = 'result-overlay low-confidence';
+                resultOverlay.textContent = `${predictedClass} (${confidencePercent}%)`;
+                
+                // v11: Use HIGH_CONFIDENCE_THRESHOLD for green vs blue distinction
+                if (confidence >= HIGH_CONFIDENCE_THRESHOLD) {
+                    resultOverlay.className = 'result-overlay high-confidence';
+                } else {
+                    resultOverlay.className = 'result-overlay low-confidence';
+                }
+                
+                recognitionStatus.textContent = `Последнее: ${predictedClass} (${confidencePercent}%)`;
             }
-            
-            recognitionStatus.textContent = `Последнее: ${predictedClass} (${confidencePercent}%)`;
-        }
         
     } catch (error) {
         console.error('Prediction error:', error);
@@ -800,43 +1444,103 @@ function autoSave() {
     }
 }
 
-// Event listeners
-trainingTab.addEventListener('click', () => switchMode('training'));
-recognitionTab.addEventListener('click', () => switchMode('recognition'));
-addClassBtn.addEventListener('click', addClassPrompt);
-
-// Single capture button
-const captureBtn = document.getElementById('capture-btn');
-
-captureBtn.addEventListener('mousedown', () => {
-    if (selectedClass) {
-        startCapture(selectedClass);
+// v11: Setup all event listeners
+function setupEventListeners() {
+    // Mode tabs
+    trainingTab.addEventListener('click', () => switchMode('training'));
+    recognitionTab.addEventListener('click', () => switchMode('recognition'));
+    addClassBtn.addEventListener('click', addClassPrompt);
+    
+    // Single capture button
+    const captureBtn = document.getElementById('capture-btn');
+    
+    captureBtn.addEventListener('mousedown', () => {
+        if (selectedClass) {
+            startCapture(selectedClass);
+        }
+    });
+    
+    captureBtn.addEventListener('mouseup', stopCapture);
+    captureBtn.addEventListener('mouseleave', stopCapture);
+    
+    captureBtn.addEventListener('touchstart', (e) => {
+        e.preventDefault();
+        if (selectedClass) {
+            startCapture(selectedClass);
+        }
+    }, { passive: false });
+    
+    captureBtn.addEventListener('touchend', (e) => {
+        e.preventDefault();
+        stopCapture();
+    }, { passive: false });
+    
+    // v11: Model management buttons
+    loadModelBtn.addEventListener('click', loadModelFromFirebase);
+    saveModelBtn.addEventListener('click', saveModelToFirebase);
+    exportModelBtn.addEventListener('click', exportModel);
+    renameModelBtn.addEventListener('click', renameModel);
+    deleteModelBtn.addEventListener('click', deleteModel);
+    clearModelBtn.addEventListener('click', clearModel);
+    
+    // Camera controls
+    flipCameraBtn.addEventListener('click', flipCamera);
+    
+    if (restartCameraBtn) {
+        restartCameraBtn.addEventListener('click', restartCamera);
     }
-});
-
-captureBtn.addEventListener('mouseup', stopCapture);
-captureBtn.addEventListener('mouseleave', stopCapture);
-
-captureBtn.addEventListener('touchstart', (e) => {
-    e.preventDefault();
-    if (selectedClass) {
-        startCapture(selectedClass);
-    }
-}, { passive: false });
-
-captureBtn.addEventListener('touchend', (e) => {
-    e.preventDefault();
-    stopCapture();
-}, { passive: false });
-
-saveModelBtn.addEventListener('click', saveModelToStorage);
-loadModelBtn.addEventListener('click', loadModelFromStorage);
-clearModelBtn.addEventListener('click', clearModel);
-flipCameraBtn.addEventListener('click', flipCamera);
+    
+    // v11: Admin modal and login
+    adminBtn.addEventListener('click', () => {
+        if (isAdminMode) {
+            openAdminModal();
+        } else {
+            openAdminModal();
+        }
+    });
+    
+    closeModalBtn.addEventListener('click', closeAdminModal);
+    
+    adminModal.addEventListener('click', (e) => {
+        if (e.target === adminModal) {
+            closeAdminModal();
+        }
+    });
+    
+    loginBtn.addEventListener('click', adminLogin);
+    
+    adminPassword.addEventListener('keypress', (e) => {
+        if (e.key === 'Enter') {
+            adminLogin();
+        }
+    });
+    
+    logoutBtn.addEventListener('click', adminLogout);
+    
+    initDefaultsBtn.addEventListener('click', initializeDefaultModels);
+    
+    // Show restart button on video/stream errors
+    window.addEventListener('error', (e) => {
+        if (restartCameraBtn) {
+            const errorMessage = e.message || (e.error && e.error.message) || '';
+            if (errorMessage.toLowerCase().includes('video') || errorMessage.toLowerCase().includes('stream')) {
+                restartCameraBtn.style.display = 'block';
+            }
+        }
+    });
+    
+    // Auto-save on page unload (admin only)
+    window.addEventListener('beforeunload', () => {
+        if (isAdminMode && autosaveTimeout) {
+            // Try to save immediately on unload
+            clearTimeout(autosaveTimeout);
+        }
+    });
+}
 
 // Restart camera button handler
 async function restartCamera() {
-    console.log('[v10] Manual camera restart requested');
+    console.log(`[${APP_VERSION}] Manual camera restart requested`);
     
     restartCameraBtn.disabled = true;
     restartCameraBtn.textContent = '⏳ Перезапуск...';
@@ -849,7 +1553,7 @@ async function restartCamera() {
         // Stop old stream
         if (stream) {
             stream.getTracks().forEach(track => {
-                console.log('[v10] Stopping track:', track.kind);
+                console.log(`[${APP_VERSION}] Stopping track:`, track.kind);
                 track.stop();
             });
         }
@@ -870,32 +1574,13 @@ async function restartCamera() {
         restartCameraBtn.classList.remove('pulse');
         
     } catch (error) {
-        console.error('[v10] Restart failed:', error);
+        console.error(`[${APP_VERSION}] Restart failed:`, error);
         alert('❌ Не удалось перезапустить: ' + error.message);
         restartCameraBtn.textContent = '⚠️ Попробовать ещё раз';
     } finally {
         restartCameraBtn.disabled = false;
     }
 }
-
-if (restartCameraBtn) {
-    restartCameraBtn.addEventListener('click', restartCamera);
-}
-
-// Show restart button on video/stream errors
-window.addEventListener('error', (e) => {
-    if (restartCameraBtn) {
-        const errorMessage = e.message || (e.error && e.error.message) || '';
-        if (errorMessage.toLowerCase().includes('video') || errorMessage.toLowerCase().includes('stream')) {
-            restartCameraBtn.style.display = 'block';
-        }
-    }
-});
-
-// Auto-save on page unload
-window.addEventListener('beforeunload', () => {
-    autoSave();
-});
 
 // Initialize
 init();
