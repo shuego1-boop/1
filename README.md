@@ -1,10 +1,20 @@
-# My Car Detector v12 🚗
+# My Car Detector v16 🚗
 
 A real-time object detection web app using TensorFlow.js with KNN classifier and MobileNet.
 
-## v12 Features
+## v16 Features (NEW)
 
-### Firestore Chunked Storage (NEW in v12)
+### External Model Storage for Large Models
+- **Self-hosted server option**: Store large models (>800KB) on your own server instead of Firestore
+- **Automatic switching**: Models exceeding threshold automatically use external storage
+- **Backward compatible**: Existing Firestore-stored models continue to work
+- **Gzip compression**: Models compressed before upload to save bandwidth and storage
+- **Docker deployment**: Easy-to-deploy Node.js API with automatic HTTPS via Caddy
+- **Configurable**: Set custom threshold and force external storage for all models
+
+### v12 Features
+
+### Firestore Chunked Storage
 - **No Firebase Storage required**: Works on Spark (free) plan
 - **Chunked storage**: Model datasets split into 500KB chunks (before encoding), stored in Firestore
 - **Public read access**: Anyone can load default model and use recognition
@@ -158,6 +168,136 @@ After logging in as admin:
 3. This creates 10 empty model entries (model-1 through model-10)
 4. Train `model-1` first so public users can auto-load it
 
+## External Model Storage Setup (Optional)
+
+When your models grow larger than ~800KB, Firestore chunked storage can become slow or hit write limits. You can deploy your own model storage server to handle large models.
+
+### Why Use External Storage?
+
+- **Avoid Firestore limits**: Models larger than 6-7MB can hit Firestore document/write limits
+- **Faster transfers**: Gzip compression reduces transfer size by 70-90%
+- **Self-hosted control**: You control the storage infrastructure
+- **Automatic switching**: App automatically uses external storage for large models
+
+### Quick Deployment
+
+1. **Navigate to server directory:**
+   ```bash
+   cd model-storage-server
+   ```
+
+2. **Copy and configure environment:**
+   ```bash
+   cp .env.example .env
+   nano .env
+   ```
+   
+   Set these values:
+   ```env
+   API_KEY=your-secure-random-key-here
+   ALLOWED_ORIGINS=https://shuego1-boop.github.io
+   ```
+   
+   Generate a strong API key:
+   ```bash
+   openssl rand -base64 32
+   ```
+
+3. **Configure your domain in Caddyfile:**
+   ```bash
+   nano Caddyfile
+   ```
+   
+   Replace `YOUR_DOMAIN.com` with your actual domain (e.g., `models.example.com`)
+
+4. **Point your domain to server IP:**
+   - Create an A record: `models.example.com` → your server's IP
+
+5. **Start the server:**
+   ```bash
+   docker-compose up -d
+   ```
+
+6. **Configure the web app:**
+   
+   Edit `app.js` and set:
+   ```javascript
+   const EXTERNAL_MODEL_STORE_BASE_URL = 'https://models.example.com';
+   const EXTERNAL_MODEL_STORE_API_KEY = 'your-api-key-from-env';
+   const EXTERNAL_STORAGE_THRESHOLD = 800 * 1024; // 800KB
+   ```
+
+7. **Deploy updated web app** to GitHub Pages
+
+### How It Works
+
+- Models under 800KB (default) use Firestore chunks as before
+- Models over 800KB automatically upload to external server
+- Metadata stored in Firestore includes `artifactStorage: 'external'` and `artifactUrl`
+- Loading detects storage type and downloads from appropriate source
+- Existing Firestore models continue to work (backward compatible)
+
+### Security Warning ⚠️
+
+**IMPORTANT**: The API key is visible in your client-side JavaScript code. This means:
+
+1. ✅ **Anyone can view the API key** by viewing page source
+2. ✅ **Anyone with the key can upload/delete models** on your server
+3. ❌ **This is NOT production-grade security**
+
+This is a **simple authentication** mechanism suitable for:
+- Personal projects
+- Trusted user groups
+- Development/testing environments
+
+**For production deployments**, consider:
+- Firebase Authentication token verification server-side
+- OAuth 2.0 flows
+- IP whitelisting
+- Request rate limiting
+- File integrity checks
+
+See `model-storage-server/README.md` for detailed security recommendations.
+
+### Configuration Options
+
+In `app.js`, you can customize:
+
+```javascript
+// Your external server URL
+const EXTERNAL_MODEL_STORE_BASE_URL = 'https://models.example.com';
+
+// API key (visible in client code - see security warning above)
+const EXTERNAL_MODEL_STORE_API_KEY = 'your-api-key';
+
+// Threshold: models larger than this use external storage
+const EXTERNAL_STORAGE_THRESHOLD = 800 * 1024; // 800KB
+
+// Force ALL models to external storage (ignores threshold)
+const USE_EXTERNAL_STORAGE = false; // Set to true to force
+```
+
+### Troubleshooting External Storage
+
+**"Authentication failed: Invalid API key"**
+- Check `EXTERNAL_MODEL_STORE_API_KEY` matches server `.env` API_KEY
+- No extra spaces or newlines in the key
+
+**"Network error: Cannot reach server"**
+- Verify `EXTERNAL_MODEL_STORE_BASE_URL` is correct
+- Check CORS: `ALLOWED_ORIGINS` in server `.env` includes your GitHub Pages URL
+- Ensure server is running: `docker-compose ps`
+- Verify domain DNS points to server IP
+
+**"Model too large: Server rejected upload"**
+- Increase `limit` in server.js `express.raw()` middleware
+- Default is 50MB
+
+**Models still use Firestore after configuring external storage**
+- Models under `EXTERNAL_STORAGE_THRESHOLD` will use Firestore
+- Set `USE_EXTERNAL_STORAGE = true` to force external for all models
+- Check browser console for upload errors
+
 ## Usage
 
 ### Public Mode (No Login)
@@ -203,9 +343,19 @@ After logging in as admin:
   sizeBytes: 1234567,              // Total size of JSON
   classesCount: 5,                 // Number of classes
   examplesCount: 150,              // Total examples
-  appVersion: "v12",               // App version
+  appVersion: "v16",               // App version
   datasetVersion: 2,               // Increments on each save
+  
+  // For Firestore chunked storage (models < 800KB by default):
   chunksCount: 3,                  // Number of chunks
+  artifactStorage: "firestore",    // Storage type
+  
+  // OR for external storage (models > 800KB by default):
+  artifactStorage: "external",     // Storage type
+  artifactUrl: "https://...",      // URL to download artifact
+  artifactSizeBytes: 234567,       // Compressed artifact size
+  artifactContentEncoding: "gzip", // Content encoding
+  
   default: true                    // (Optional) Default model flag
 }
 ```
@@ -283,6 +433,10 @@ This app includes extensive fixes for iOS Safari:
 - `README.md` - This file
 
 ### Version History
+- **v16**: External model storage for large models (Docker API server) + gzip compression + automatic storage selection + backward compatible
+- **v15**: Base64 encoding safety improvements for large arrays
+- **v14**: Variant A workflow improvements
+- **v13**: Admin UI enhancements
 - **v12**: Firestore chunked storage (no Storage required) + strict Public/Admin split + auto-load default model + auth diagnostics
 - **v11**: Firebase public catalog + admin mode + "Не распознано"
 - **v10**: Enhanced iOS Safari compatibility with video isolation

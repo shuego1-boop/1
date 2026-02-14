@@ -27,13 +27,21 @@ const STORAGE_KEY = 'myCarDetectorModel';
 const DATASET_STORAGE_KEY = 'carDetectorDataset';
 const CONFIDENCE_THRESHOLD = 0.70; // v11: Changed to 0.7 for "Не распознано"
 const HIGH_CONFIDENCE_THRESHOLD = 0.90;
-const APP_VERSION = 'v15';
+const APP_VERSION = 'v16';
 const IS_IOS = /iPhone|iPad|iPod/.test(navigator.userAgent);
 const IOS_VIDEO_READY_DELAY = 400; // iOS needs more time for video initialization
 const DEFAULT_VIDEO_READY_DELAY = 200;
 const AUTOSAVE_DEBOUNCE_MS = 2000;
 const DEFAULT_MODEL_ID = 'model-1'; // v12: Default model for public mode
 const CHUNK_SIZE = 500 * 1024; // v12: 500KB chunks before encoding (~667KB after base64, stays under 1MB with metadata)
+
+// v16: External model storage configuration
+// WARNING: API key is visible in client-side code. This is NOT strong security.
+// For production, consider Firebase token verification or OAuth 2.0.
+const EXTERNAL_MODEL_STORE_BASE_URL = null; // Set to your server URL (e.g., 'https://models.example.com')
+const EXTERNAL_MODEL_STORE_API_KEY = null; // Set to your API key from server .env
+const EXTERNAL_STORAGE_THRESHOLD = 800 * 1024; // 800KB - models larger than this use external storage
+const USE_EXTERNAL_STORAGE = false; // Set to true to force external storage for all models (ignores threshold)
 
 // v11: Firebase Configuration
 // Note: Firebase API keys are designed to be public. Security is enforced
@@ -460,6 +468,207 @@ function uint8ArrayToBase64(bytes) {
     return btoa(binaryString);
 }
 
+// v16: External storage helper - check if model should use external storage
+function shouldUseExternalStorage(modelSizeBytes) {
+    if (!EXTERNAL_MODEL_STORE_BASE_URL || !EXTERNAL_MODEL_STORE_API_KEY) {
+        // Not configured - log warning if threshold is exceeded
+        if (modelSizeBytes > EXTERNAL_STORAGE_THRESHOLD) {
+            console.warn(`[${APP_VERSION}] Model size (${(modelSizeBytes / 1024).toFixed(2)} KB) exceeds threshold, but external storage is not configured. Using Firestore chunks instead.`);
+            console.warn(`[${APP_VERSION}] To enable external storage, set EXTERNAL_MODEL_STORE_BASE_URL and EXTERNAL_MODEL_STORE_API_KEY in app.js`);
+        }
+        return false; // Not configured
+    }
+    
+    if (USE_EXTERNAL_STORAGE) {
+        console.log(`[${APP_VERSION}] External storage forced (USE_EXTERNAL_STORAGE = true)`);
+        return true; // Forced external storage
+    }
+    
+    return modelSizeBytes > EXTERNAL_STORAGE_THRESHOLD;
+}
+
+// v16: External storage helper - compress data using gzip
+async function compressData(jsonString) {
+    const encoder = new TextEncoder();
+    const data = encoder.encode(jsonString);
+    
+    // Use CompressionStream if available (modern browsers)
+    if (typeof CompressionStream !== 'undefined') {
+        const stream = new ReadableStream({
+            start(controller) {
+                controller.enqueue(data);
+                controller.close();
+            }
+        });
+        
+        const compressedStream = stream.pipeThrough(new CompressionStream('gzip'));
+        const reader = compressedStream.getReader();
+        const chunks = [];
+        
+        while (true) {
+            const { done, value } = await reader.read();
+            if (done) break;
+            chunks.push(value);
+        }
+        
+        // Combine chunks into single Uint8Array
+        const totalLength = chunks.reduce((sum, chunk) => sum + chunk.length, 0);
+        const result = new Uint8Array(totalLength);
+        let offset = 0;
+        for (const chunk of chunks) {
+            result.set(chunk, offset);
+            offset += chunk.length;
+        }
+        
+        return result;
+    } else {
+        // Fallback: use pako library if CompressionStream not available
+        throw new Error('Compression not supported in this browser. CompressionStream API required (Chrome 80+, Safari 16.4+, Firefox 113+). Please update your browser or use a modern browser.');
+    }
+}
+
+// v16: External storage helper - decompress gzipped data
+async function decompressData(compressedData) {
+    // Use DecompressionStream if available (modern browsers)
+    if (typeof DecompressionStream !== 'undefined') {
+        const stream = new ReadableStream({
+            start(controller) {
+                controller.enqueue(compressedData);
+                controller.close();
+            }
+        });
+        
+        const decompressedStream = stream.pipeThrough(new DecompressionStream('gzip'));
+        const reader = decompressedStream.getReader();
+        const chunks = [];
+        
+        while (true) {
+            const { done, value } = await reader.read();
+            if (done) break;
+            chunks.push(value);
+        }
+        
+        // Combine chunks and decode to string
+        const totalLength = chunks.reduce((sum, chunk) => sum + chunk.length, 0);
+        const result = new Uint8Array(totalLength);
+        let offset = 0;
+        for (const chunk of chunks) {
+            result.set(chunk, offset);
+            offset += chunk.length;
+        }
+        
+        const decoder = new TextDecoder();
+        return decoder.decode(result);
+    } else {
+        throw new Error('Decompression not supported in this browser. DecompressionStream API required (Chrome 80+, Safari 16.4+, Firefox 113+). Please update your browser or use a modern browser.');
+    }
+}
+
+// v16: Upload model to external server
+async function uploadModelToExternalServer(modelId, modelJson) {
+    const jsonString = typeof modelJson === 'string' ? modelJson : JSON.stringify(modelJson);
+    const sizeBytes = jsonString.length;
+    const sizeMB = (sizeBytes / (1024 * 1024)).toFixed(2);
+    
+    console.log(`[${APP_VERSION}] Compressing model for external storage: ${sizeMB} MB`);
+    
+    // Compress the data
+    const compressedData = await compressData(jsonString);
+    const compressedSizeMB = (compressedData.length / (1024 * 1024)).toFixed(2);
+    
+    console.log(`[${APP_VERSION}] Compressed to: ${compressedSizeMB} MB`);
+    console.log(`[${APP_VERSION}] Uploading to external server: ${EXTERNAL_MODEL_STORE_BASE_URL}`);
+    
+    const url = `${EXTERNAL_MODEL_STORE_BASE_URL}/api/models/${modelId}`;
+    
+    const response = await fetch(url, {
+        method: 'POST',
+        headers: {
+            'X-API-Key': EXTERNAL_MODEL_STORE_API_KEY,
+            'Content-Type': 'application/octet-stream'
+        },
+        body: compressedData
+    });
+    
+    if (!response.ok) {
+        const errorText = await response.text();
+        let errorMsg;
+        
+        try {
+            const errorJson = JSON.parse(errorText);
+            errorMsg = errorJson.message || errorJson.error || errorText;
+        } catch {
+            errorMsg = errorText;
+        }
+        
+        // Provide actionable error messages
+        if (response.status === 401) {
+            throw new Error(`❌ Authentication failed: Invalid API key. Please check EXTERNAL_MODEL_STORE_API_KEY in app.js`);
+        } else if (response.status === 413) {
+            throw new Error(`❌ Model too large: Server rejected the upload (${compressedSizeMB} MB). Consider increasing server upload limit.`);
+        } else if (response.status === 0 || !response.status) {
+            throw new Error(`❌ Network error: Cannot reach server at ${EXTERNAL_MODEL_STORE_BASE_URL}. Check CORS settings and server availability.`);
+        } else {
+            throw new Error(`❌ Upload failed (${response.status}): ${errorMsg}`);
+        }
+    }
+    
+    const result = await response.json();
+    console.log(`[${APP_VERSION}] External upload successful:`, result);
+    
+    return {
+        artifactUrl: url, // URL is already correct for GET requests
+        artifactSizeBytes: compressedData.length,
+        artifactContentEncoding: 'gzip',
+        originalSizeBytes: sizeBytes
+    };
+}
+
+// v16: Download model from external server
+async function downloadModelFromExternalServer(artifactUrl) {
+    console.log(`[${APP_VERSION}] Downloading model from external server: ${artifactUrl}`);
+    
+    const response = await fetch(artifactUrl, {
+        method: 'GET',
+        headers: {
+            'Accept': 'application/octet-stream'
+        }
+    });
+    
+    if (!response.ok) {
+        const errorText = await response.text();
+        let errorMsg;
+        
+        try {
+            const errorJson = JSON.parse(errorText);
+            errorMsg = errorJson.message || errorJson.error || errorText;
+        } catch {
+            errorMsg = errorText;
+        }
+        
+        if (response.status === 404) {
+            throw new Error(`❌ Model not found on external server. The model may have been deleted.`);
+        } else if (response.status === 0 || !response.status) {
+            throw new Error(`❌ Network error: Cannot reach external server. Check your internet connection.`);
+        } else {
+            throw new Error(`❌ Download failed (${response.status}): ${errorMsg}`);
+        }
+    }
+    
+    // Get the compressed data
+    const compressedData = await response.arrayBuffer();
+    const compressedArray = new Uint8Array(compressedData);
+    
+    console.log(`[${APP_VERSION}] Downloaded ${(compressedArray.length / (1024 * 1024)).toFixed(2)} MB, decompressing...`);
+    
+    // Decompress the data
+    const jsonString = await decompressData(compressedArray);
+    
+    console.log(`[${APP_VERSION}] Decompressed to ${(jsonString.length / (1024 * 1024)).toFixed(2)} MB`);
+    
+    return JSON.parse(jsonString);
+}
+
 // v12: Save model dataset to Firestore chunks
 async function saveModelToFirestoreChunks(modelId, modelJson, datasetVersion) {
     const jsonString = typeof modelJson === 'string' ? modelJson : JSON.stringify(modelJson);
@@ -555,7 +764,7 @@ async function loadModelFromFirestoreChunks(modelId) {
     return modelData;
 }
 
-// v12: Save model to Firestore chunks (replaces Firebase Storage)
+// v16: Save model to Firestore chunks or external storage (replaces Firebase Storage)
 async function saveModelToFirebase() {
     try {
         const numClasses = classifier.getNumClasses();
@@ -573,7 +782,7 @@ async function saveModelToFirebase() {
         
         saveModelBtn.disabled = true;
         saveModelBtn.textContent = '💾 Saving...';
-        errorElement.textContent = 'Saving model to Firebase...';
+        errorElement.textContent = 'Preparing model for save...';
         
         // Serialize classifier dataset
         const dataset = classifier.getClassifierDataset();
@@ -601,36 +810,128 @@ async function saveModelToFirebase() {
         const sizeBytes = modelJson.length;
         const sizeMB = (sizeBytes / (1024 * 1024)).toFixed(2);
         
-        console.log(`[${APP_VERSION}] Uploading model ${selectedModelId}, size: ${sizeMB} MB`);
+        console.log(`[${APP_VERSION}] Model size: ${sizeMB} MB`);
         
         // v12: Get or create dataset version
         const modelDoc = await db.collection('models').doc(selectedModelId).get();
         const currentDatasetVersion = modelDoc.exists ? (modelDoc.data().datasetVersion || 0) : 0;
         const newDatasetVersion = currentDatasetVersion + 1;
         
-        // v12: Save to Firestore chunks instead of Storage
-        const chunksCount = await saveModelToFirestoreChunks(selectedModelId, modelJson, newDatasetVersion);
+        // v16: Decide whether to use external storage or Firestore chunks
+        const useExternal = shouldUseExternalStorage(sizeBytes);
+        let storageLocation = 'firestore';
+        let metadataUpdate = {};
         
-        console.log(`[${APP_VERSION}] Model uploaded to Firestore (${chunksCount} chunks)`);
+        if (useExternal) {
+            // Upload to external server
+            errorElement.textContent = `Uploading model to external server (${sizeMB} MB)...`;
+            console.log(`[${APP_VERSION}] Using external storage for model ${selectedModelId}`);
+            
+            try {
+                const externalResult = await uploadModelToExternalServer(selectedModelId, modelJson);
+                
+                console.log(`[${APP_VERSION}] Model uploaded to external server`);
+                storageLocation = 'external';
+                
+                // Prepare metadata for external storage
+                metadataUpdate = {
+                    name: modelDoc.exists ? modelDoc.data().name : `Model ${selectedModelId}`,
+                    format: 'knn-mobilenet-v1',
+                    updatedAt: firebase.firestore.FieldValue.serverTimestamp(),
+                    sizeBytes: sizeBytes,
+                    classesCount: Object.keys(classes).length,
+                    examplesCount: Object.values(classes).reduce((sum, cls) => sum + cls.examples, 0),
+                    appVersion: APP_VERSION,
+                    datasetVersion: newDatasetVersion,
+                    artifactStorage: 'external',
+                    artifactUrl: externalResult.artifactUrl,
+                    artifactSizeBytes: externalResult.artifactSizeBytes,
+                    artifactContentEncoding: externalResult.artifactContentEncoding
+                };
+                
+                // Clean up old Firestore chunks if they exist (migrating from chunked to external)
+                try {
+                    const oldChunksSnapshot = await db.collection('modelDatasets')
+                        .doc(selectedModelId)
+                        .collection('chunks')
+                        .get();
+                    
+                    if (!oldChunksSnapshot.empty) {
+                        console.log(`[${APP_VERSION}] Cleaning up ${oldChunksSnapshot.size} old Firestore chunks`);
+                        const deleteBatch = db.batch();
+                        oldChunksSnapshot.docs.forEach(doc => {
+                            deleteBatch.delete(doc.ref);
+                        });
+                        await deleteBatch.commit();
+                    }
+                } catch (cleanupError) {
+                    console.warn(`[${APP_VERSION}] Could not clean up old chunks:`, cleanupError);
+                }
+                
+            } catch (externalError) {
+                // If external storage fails, fall back to Firestore chunks
+                console.warn(`[${APP_VERSION}] External storage failed, falling back to Firestore:`, externalError);
+                errorElement.textContent = `External storage failed, using Firestore chunks... (${sizeMB} MB)`;
+                
+                const chunksCount = await saveModelToFirestoreChunks(selectedModelId, modelJson, newDatasetVersion);
+                storageLocation = 'firestore-fallback';
+                
+                metadataUpdate = {
+                    name: modelDoc.exists ? modelDoc.data().name : `Model ${selectedModelId}`,
+                    format: 'knn-mobilenet-v1',
+                    updatedAt: firebase.firestore.FieldValue.serverTimestamp(),
+                    sizeBytes: sizeBytes,
+                    classesCount: Object.keys(classes).length,
+                    examplesCount: Object.values(classes).reduce((sum, cls) => sum + cls.examples, 0),
+                    appVersion: APP_VERSION,
+                    datasetVersion: newDatasetVersion,
+                    chunksCount: chunksCount,
+                    artifactStorage: 'firestore'
+                };
+                
+                // Show warning about external storage failure
+                console.error(`[${APP_VERSION}] External storage error:`, externalError);
+                alert(`⚠️ External storage failed: ${externalError.message}\n\nFalling back to Firestore chunks.`);
+            }
+        } else {
+            // Use Firestore chunks
+            errorElement.textContent = `Saving model to Firestore chunks (${sizeMB} MB)...`;
+            console.log(`[${APP_VERSION}] Using Firestore chunks for model ${selectedModelId}`);
+            
+            const chunksCount = await saveModelToFirestoreChunks(selectedModelId, modelJson, newDatasetVersion);
+            
+            console.log(`[${APP_VERSION}] Model uploaded to Firestore (${chunksCount} chunks)`);
+            
+            metadataUpdate = {
+                name: modelDoc.exists ? modelDoc.data().name : `Model ${selectedModelId}`,
+                format: 'knn-mobilenet-v1',
+                updatedAt: firebase.firestore.FieldValue.serverTimestamp(),
+                sizeBytes: sizeBytes,
+                classesCount: Object.keys(classes).length,
+                examplesCount: Object.values(classes).reduce((sum, cls) => sum + cls.examples, 0),
+                appVersion: APP_VERSION,
+                datasetVersion: newDatasetVersion,
+                chunksCount: chunksCount,
+                artifactStorage: 'firestore'
+            };
+        }
         
         // Update Firestore metadata
-        await db.collection('models').doc(selectedModelId).set({
-            name: modelDoc.exists ? modelDoc.data().name : `Model ${selectedModelId}`,
-            format: 'knn-mobilenet-v1',
-            updatedAt: firebase.firestore.FieldValue.serverTimestamp(),
-            sizeBytes: sizeBytes,
-            classesCount: Object.keys(classes).length,
-            examplesCount: Object.values(classes).reduce((sum, cls) => sum + cls.examples, 0),
-            appVersion: APP_VERSION,
-            datasetVersion: newDatasetVersion,
-            chunksCount: chunksCount
-        }, { merge: true });
+        await db.collection('models').doc(selectedModelId).set(metadataUpdate, { merge: true });
         
         console.log(`[${APP_VERSION}] Firestore metadata updated`);
         
         currentModelId = selectedModelId;
-        errorElement.textContent = `✅ Model saved! (${sizeMB} MB, ${chunksCount} chunks)`;
-        setTimeout(() => { errorElement.textContent = ''; }, 3000);
+        
+        // Display success message with storage location
+        const storageMsg = storageLocation === 'external' 
+            ? '☁️ external server'
+            : storageLocation === 'firestore-fallback'
+            ? '💾 Firestore (fallback)'
+            : `💾 Firestore (${metadataUpdate.chunksCount} chunks)`;
+        
+        errorElement.textContent = `✅ Model saved to ${storageMsg}! (${sizeMB} MB)`;
+        setTimeout(() => { errorElement.textContent = ''; }, 5000);
         
         // Reload catalog to get updated metadata
         await loadModelCatalog();
@@ -657,6 +958,7 @@ async function saveModelToFirebase() {
 }
 
 // v12: Load model from Firestore chunks (replaces Firebase Storage)
+// v16: Load model from Firestore chunks or external storage (replaces Firebase Storage)
 async function loadModelFromFirebase() {
     try {
         // v14: Use management helper to validate and get selected model
@@ -667,7 +969,7 @@ async function loadModelFromFirebase() {
         
         loadModelBtn.disabled = true;
         loadModelBtn.textContent = '📂 Loading...';
-        errorElement.textContent = 'Loading model from Firebase...';
+        errorElement.textContent = 'Loading model...';
         
         // Get model metadata
         const modelDoc = await db.collection('models').doc(selectedModelId).get();
@@ -676,11 +978,26 @@ async function loadModelFromFirebase() {
         }
         
         const modelMeta = modelDoc.data();
+        let modelData;
         
-        console.log(`[${APP_VERSION}] Loading model from Firestore chunks: ${selectedModelId}`);
-        
-        // v12: Load from Firestore chunks instead of Storage
-        const modelData = await loadModelFromFirestoreChunks(selectedModelId);
+        // v16: Check if model uses external storage
+        if (modelMeta.artifactStorage === 'external' && modelMeta.artifactUrl) {
+            console.log(`[${APP_VERSION}] Loading model from external storage: ${selectedModelId}`);
+            errorElement.textContent = 'Downloading model from external server...';
+            
+            // Load from external server
+            modelData = await downloadModelFromExternalServer(modelMeta.artifactUrl);
+            
+            console.log(`[${APP_VERSION}] Model loaded from external storage`);
+        } else {
+            // v12: Load from Firestore chunks (default/backward compatible)
+            console.log(`[${APP_VERSION}] Loading model from Firestore chunks: ${selectedModelId}`);
+            errorElement.textContent = 'Loading model from Firestore...';
+            
+            modelData = await loadModelFromFirestoreChunks(selectedModelId);
+            
+            console.log(`[${APP_VERSION}] Model loaded from Firestore chunks`);
+        }
         
         console.log(`[${APP_VERSION}] Model data loaded, format: ${modelData.format}`);
         
@@ -730,7 +1047,8 @@ async function loadModelFromFirebase() {
         renderClasses();
         
         const sizeMB = (modelMeta.sizeBytes / (1024 * 1024)).toFixed(2);
-        errorElement.textContent = `✅ Model loaded! (${sizeMB} MB)`;
+        const storageType = modelMeta.artifactStorage === 'external' ? '☁️ external server' : '💾 Firestore';
+        errorElement.textContent = `✅ Model loaded from ${storageType}! (${sizeMB} MB)`;
         setTimeout(() => { errorElement.textContent = ''; }, 3000);
         
         console.log(`[${APP_VERSION}] Model ${selectedModelId} loaded successfully`);

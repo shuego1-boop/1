@@ -1,0 +1,14 @@
+# Model storage server data
+model-storage-server/data/
+model-storage-server/.env
+model-storage-server/node_modules/
+
+# Editor files
+.DS_Store
+*.swp
+*.swo
+*~
+
+# Logs
+*.log
+npm-debug.log*
