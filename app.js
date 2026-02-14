@@ -27,7 +27,7 @@ const STORAGE_KEY = 'myCarDetectorModel';
 const DATASET_STORAGE_KEY = 'carDetectorDataset';
 const CONFIDENCE_THRESHOLD = 0.70; // v11: Changed to 0.7 for "Не распознано"
 const HIGH_CONFIDENCE_THRESHOLD = 0.90;
-const APP_VERSION = 'v14';
+const APP_VERSION = 'v15';
 const IS_IOS = /iPhone|iPad|iPod/.test(navigator.userAgent);
 const IOS_VIDEO_READY_DELAY = 400; // iOS needs more time for video initialization
 const DEFAULT_VIDEO_READY_DELAY = 200;
@@ -449,6 +449,17 @@ async function initializeDefaultModels() {
     }
 }
 
+// v15: Helper function to safely convert Uint8Array to base64 (avoids stack overflow)
+function uint8ArrayToBase64(bytes) {
+    let binaryString = '';
+    const chunkSize = 8192; // Process in 8KB slices to avoid stack overflow
+    for (let i = 0; i < bytes.length; i += chunkSize) {
+        const chunk = bytes.subarray(i, Math.min(i + chunkSize, bytes.length));
+        binaryString += String.fromCharCode.apply(null, chunk);
+    }
+    return btoa(binaryString);
+}
+
 // v12: Save model dataset to Firestore chunks
 async function saveModelToFirestoreChunks(modelId, modelJson, datasetVersion) {
     const jsonString = typeof modelJson === 'string' ? modelJson : JSON.stringify(modelJson);
@@ -460,7 +471,8 @@ async function saveModelToFirestoreChunks(modelId, modelJson, datasetVersion) {
         // Use TextEncoder for proper UTF-8 handling
         const encoder = new TextEncoder();
         const utf8Bytes = encoder.encode(chunk);
-        const base64Chunk = btoa(String.fromCharCode(...utf8Bytes));
+        // v15: Use safe base64 conversion to avoid RangeError with large arrays
+        const base64Chunk = uint8ArrayToBase64(utf8Bytes);
         chunks.push({
             v: datasetVersion,
             i: chunks.length,
@@ -625,8 +637,19 @@ async function saveModelToFirebase() {
         
     } catch (error) {
         console.error(`[${APP_VERSION}] Save to Firebase error:`, error);
-        errorElement.textContent = 'Error saving model: ' + error.message;
-        alert('Error saving model: ' + error.message);
+        
+        // v15: Detect permission-denied errors and provide actionable guidance
+        let errorMessage = 'Error saving model: ' + error.message;
+        if (error.code === 'permission-denied' || (error.message && error.message.includes('permission'))) {
+            errorMessage = '❌ Permission denied. Please check:\n' +
+                '1. Your admin user has admins/{uid} document with enabled: true\n' +
+                '2. Firestore rules allow admin write to modelDatasets/{modelId}/chunks/*\n' +
+                '3. You are logged in as an admin user\n\n' +
+                'Original error: ' + error.message;
+        }
+        
+        errorElement.textContent = errorMessage;
+        alert(errorMessage);
     } finally {
         saveModelBtn.disabled = false;
         saveModelBtn.textContent = '💾 Save to Server';
@@ -1740,6 +1763,12 @@ function clearModel() {
 // Auto-save function (silent save without alert)
 function autoSave() {
     try {
+        // v15: Guard against null classifier to prevent null-pointer errors
+        if (!classifier) {
+            console.log('Auto-save skipped: classifier not initialized');
+            return;
+        }
+        
         const numClasses = classifier.getNumClasses();
         if (numClasses === 0) {
             console.log('Auto-save skipped: no classes to save');
