@@ -37,6 +37,8 @@ A real-time object detection web app using TensorFlow.js with KNN classifier and
    appId: "1:978235404466:web:bc11571d676cdb55f719ab"
    ```
 
+> **Security Note**: Firebase API keys are designed to be public and included in client-side code. Security is enforced through Firebase Security Rules (see below), not by hiding the API key. However, you should configure API key restrictions in Google Cloud Console to limit usage to your specific domains and prevent abuse. Consider enabling Firebase App Check for additional protection against unauthorized clients.
+
 ### Step 1: Enable Email/Password Authentication
 
 1. Go to Firebase Console → Authentication

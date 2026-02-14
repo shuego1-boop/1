@@ -35,6 +35,10 @@ const DEFAULT_VIDEO_READY_DELAY = 200;
 const AUTOSAVE_DEBOUNCE_MS = 2000;
 
 // v11: Firebase Configuration
+// Note: Firebase API keys are designed to be public. Security is enforced
+// through Firebase Security Rules, not by hiding the API key. Configure
+// API key restrictions in Google Cloud Console and use App Check for
+// additional protection against unauthorized access.
 const firebaseConfig = {
     apiKey: "AIzaSyDUX-p3RKcnWXMIHF0Ofk5m7LupxdU9nZU",
     authDomain: "raspozn-ef99a.firebaseapp.com",
@@ -1492,13 +1496,7 @@ function setupEventListeners() {
     }
     
     // v11: Admin modal and login
-    adminBtn.addEventListener('click', () => {
-        if (isAdminMode) {
-            openAdminModal();
-        } else {
-            openAdminModal();
-        }
-    });
+    adminBtn.addEventListener('click', openAdminModal);
     
     closeModalBtn.addEventListener('click', closeAdminModal);
     
