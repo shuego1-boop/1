@@ -8,6 +8,8 @@ let currentMode = 'training';
 let recognitionRunning = false;
 let recognitionAnimationId = null;
 let useFrontCamera = false;
+let isSwitchingCamera = false;
+let modeSwitchTimeout = null;
 
 // Constants
 const STORAGE_KEY = 'myCarDetectorModel';
@@ -33,6 +35,18 @@ const errorElement = document.getElementById('error');
 async function init() {
     try {
         errorElement.textContent = 'Загрузка моделей...';
+        
+        // Check TensorFlow availability with retry logic
+        let retries = 0;
+        const maxRetries = 5;
+        while (typeof tf === 'undefined' || typeof mobilenet === 'undefined' || typeof knnClassifier === 'undefined') {
+            if (retries >= maxRetries) {
+                throw new Error('Не удалось загрузить TensorFlow.js. Проверьте подключение к интернету и отключите блокировщики рекламы.');
+            }
+            // Yield control back to event loop between checks
+            await new Promise(resolve => setTimeout(resolve, 500));
+            retries++;
+        }
         
         // Load MobileNet
         mobilenetModel = await mobilenet.load();
@@ -87,6 +101,16 @@ async function initCamera() {
 
 // Flip camera
 async function flipCamera() {
+    // Prevent race condition from double-clicking
+    if (isSwitchingCamera) {
+        console.log('Camera switch already in progress');
+        return;
+    }
+    
+    isSwitchingCamera = true;
+    flipCameraBtn.disabled = true;
+    flipCameraBtn.textContent = '🔄 Переключение...';
+    
     useFrontCamera = !useFrontCamera;
     
     const wasRecognizing = recognitionRunning;
@@ -110,6 +134,10 @@ async function flipCamera() {
     } catch (error) {
         console.error('Flip camera error:', error);
         errorElement.textContent = 'Ошибка переключения камеры: ' + error.message;
+    } finally {
+        isSwitchingCamera = false;
+        flipCameraBtn.disabled = false;
+        flipCameraBtn.textContent = '🔄 Переключить камеру';
     }
 }
 
@@ -119,6 +147,12 @@ function switchMode(mode) {
     
     // Always stop recognition first
     stopRecognition();
+    
+    // Clear any pending mode switch timeout
+    if (modeSwitchTimeout) {
+        clearTimeout(modeSwitchTimeout);
+        modeSwitchTimeout = null;
+    }
     
     if (mode === 'training') {
         trainingTab.classList.add('active');
@@ -135,10 +169,11 @@ function switchMode(mode) {
         recognitionMode.classList.add('active');
         
         // Small delay to ensure video is ready after UI switch
-        setTimeout(() => {
+        modeSwitchTimeout = setTimeout(() => {
             if (currentMode === 'recognition') {
                 startRecognition();
             }
+            modeSwitchTimeout = null;
         }, 300);
     }
 }
@@ -149,6 +184,19 @@ function addClassPrompt() {
     
     if (className && className.trim()) {
         const name = className.trim();
+        
+        // Validate class name length
+        if (name.length > 50) {
+            alert('Название класса слишком длинное (максимум 50 символов)');
+            return;
+        }
+        
+        // Validate class name: only letters, numbers, spaces, hyphen, underscore
+        const validNameRegex = /^[a-zA-Zа-яА-ЯёЁ0-9\s_\-]+$/;
+        if (!validNameRegex.test(name)) {
+            alert('Название класса может содержать только буквы, цифры, пробелы, дефис и подчёркивание');
+            return;
+        }
         
         if (classes[name]) {
             alert('Класс с таким названием уже существует');
@@ -193,19 +241,42 @@ function renderClasses() {
         const card = document.createElement('div');
         card.className = 'class-card';
         
-        card.innerHTML = `
-            <div class="class-header">
-                <div>
-                    <div class="class-name">${classData.name}</div>
-                    <div class="class-examples">📸 ${classData.examples} примеров</div>
-                </div>
-            </div>
-            <div class="class-actions">
-                <button class="capture-btn" data-class="${className}">Захватить</button>
-                <button class="delete-btn" data-class="${className}">🗑️</button>
-            </div>
-        `;
+        // Create elements safely to prevent XSS
+        const classHeader = document.createElement('div');
+        classHeader.className = 'class-header';
         
+        const headerContent = document.createElement('div');
+        
+        const nameDiv = document.createElement('div');
+        nameDiv.className = 'class-name';
+        nameDiv.textContent = classData.name; // Safe text content
+        
+        const examplesDiv = document.createElement('div');
+        examplesDiv.className = 'class-examples';
+        examplesDiv.textContent = `📸 ${classData.examples} примеров`;
+        
+        headerContent.appendChild(nameDiv);
+        headerContent.appendChild(examplesDiv);
+        classHeader.appendChild(headerContent);
+        
+        const actionsDiv = document.createElement('div');
+        actionsDiv.className = 'class-actions';
+        
+        const captureBtn = document.createElement('button');
+        captureBtn.className = 'capture-btn';
+        captureBtn.dataset.class = className;
+        captureBtn.textContent = 'Захватить';
+        
+        const deleteBtn = document.createElement('button');
+        deleteBtn.className = 'delete-btn';
+        deleteBtn.dataset.class = className;
+        deleteBtn.textContent = '🗑️';
+        
+        actionsDiv.appendChild(captureBtn);
+        actionsDiv.appendChild(deleteBtn);
+        
+        card.appendChild(classHeader);
+        card.appendChild(actionsDiv);
         classesContainer.appendChild(card);
     });
     
@@ -428,8 +499,19 @@ function saveModelToStorage() {
             dataset: datasetObj
         };
         
-        localStorage.setItem(STORAGE_KEY, JSON.stringify(modelData));
-        alert('✅ Модель сохранена!');
+        const modelJson = JSON.stringify(modelData);
+        const modelSizeMB = (modelJson.length / (1024 * 1024)).toFixed(2);
+        
+        try {
+            localStorage.setItem(STORAGE_KEY, modelJson);
+            alert(`✅ Модель сохранена! (${modelSizeMB} MB)`);
+        } catch (storageError) {
+            if (storageError.name === 'QuotaExceededError') {
+                alert(`❌ Недостаточно места в localStorage!\n\nРазмер модели: ${modelSizeMB} MB\nЛимит: ~5-10 MB\n\nРекомендации:\n• Удалите старые классы\n• Уменьшите количество примеров\n• Очистите localStorage`);
+            } else {
+                throw storageError;
+            }
+        }
         
     } catch (error) {
         console.error('Save error:', error);
@@ -468,6 +550,25 @@ function loadModelFromStorage() {
             const tensor = tf.tensor(data, [numExamples, 1024]);
             classifier.addExample(tensor, className);
             tensor.dispose();
+        });
+        
+        // Recalculate actual example counts from classifier to ensure synchronization
+        const dataset = classifier.getClassifierDataset();
+        Object.keys(classes).forEach((className) => {
+            if (dataset[className]) {
+                const actualExamples = dataset[className].shape[0];
+                const savedExamples = classes[className].examples;
+                
+                if (actualExamples !== savedExamples) {
+                    console.warn(`Example count mismatch for class ${className}: saved=${savedExamples}, actual=${actualExamples}`);
+                }
+                
+                classes[className].examples = actualExamples;
+            } else {
+                // Class exists in metadata but has no data in classifier
+                console.warn(`Class ${className} has no data in classifier, setting examples to 0`);
+                classes[className].examples = 0;
+            }
         });
         
         renderClasses();
@@ -521,8 +622,20 @@ function autoSave() {
             dataset: datasetObj
         };
         
-        localStorage.setItem(STORAGE_KEY, JSON.stringify(modelData));
-        console.log('Model auto-saved');
+        const modelJson = JSON.stringify(modelData);
+        
+        try {
+            localStorage.setItem(STORAGE_KEY, modelJson);
+            console.log('Model auto-saved');
+        } catch (storageError) {
+            if (storageError.name === 'QuotaExceededError') {
+                const modelSizeMB = (modelJson.length / (1024 * 1024)).toFixed(2);
+                console.error(`QuotaExceededError: Model size is ${modelSizeMB} MB`);
+                errorElement.textContent = `⚠️ Автосохранение не удалось: модель слишком большая (${modelSizeMB} MB). Удалите старые классы.`;
+            } else {
+                throw storageError;
+            }
+        }
     } catch (error) {
         console.error('Auto-save error:', error);
     }
