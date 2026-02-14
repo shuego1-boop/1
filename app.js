@@ -10,6 +10,7 @@ let recognitionAnimationId = null;
 let useFrontCamera = false;
 let isSwitchingCamera = false;
 let modeSwitchTimeout = null;
+let isDOMManipulationSafe = true;
 
 // Constants
 const STORAGE_KEY = 'myCarDetectorModel';
@@ -32,6 +33,7 @@ const saveModelBtn = document.getElementById('save-model-btn');
 const loadModelBtn = document.getElementById('load-model-btn');
 const clearModelBtn = document.getElementById('clear-model-btn');
 const flipCameraBtn = document.getElementById('flip-camera-btn');
+const restartCameraBtn = document.getElementById('restart-camera-btn');
 const errorElement = document.getElementById('error');
 
 // Initialize on page load
@@ -211,7 +213,23 @@ function addClassPrompt() {
             examples: 0
         };
         
+        // Track if camera was active before creating class
+        const wasCameraActive = stream && stream.active;
+        
         renderClasses();
+        
+        // iOS Safari: ensure camera restarts after class creation
+        if (wasCameraActive && videoElement) {
+            setTimeout(() => {
+                if (videoElement.paused && videoElement.srcObject) {
+                    console.log('[FIX] Restarting camera after class creation');
+                    videoElement.play().catch(err => {
+                        console.error('Failed to restart:', err);
+                        initCamera(); // Last resort
+                    });
+                }
+            }, 200); // Wait for renderClasses to complete
+        }
     }
 }
 
@@ -236,6 +254,13 @@ function deleteClass(className) {
 
 // Render classes
 function renderClasses() {
+    // NEVER render during capture on iOS
+    if (!isDOMManipulationSafe && IS_IOS) {
+        console.warn('[SKIP] Postponing renderClasses until capture stops');
+        setTimeout(renderClasses, 500);
+        return;
+    }
+    
     // iOS Safari: check if stream is still active or disconnected from video element
     if (stream && videoElement && (!stream.active || videoElement.srcObject !== stream)) {
         console.log('[MOBILE FIX] Stream lost or disconnected, reinitializing camera...');
@@ -244,7 +269,11 @@ function renderClasses() {
         });
     }
     
-    classesContainer.innerHTML = '';
+    // iOS Safari fix: NEVER use innerHTML = '' near video elements
+    // Remove old cards manually to preserve video stream
+    while (classesContainer.firstChild) {
+        classesContainer.removeChild(classesContainer.firstChild);
+    }
     
     Object.keys(classes).forEach(className => {
         const classData = classes[className];
@@ -330,12 +359,29 @@ function renderClasses() {
         btn.addEventListener('click', () => deleteClass(btn.dataset.class));
     });
     
-    // iOS Safari fix: ensure video keeps playing after DOM manipulation
-    if (videoElement && videoElement.paused && videoElement.srcObject) {
-        console.log('[MOBILE FIX] Resuming video playback after DOM changes');
-        videoElement.play().catch(err => {
-            console.warn('[MOBILE FIX] Video autoplay prevented:', err);
-        });
+    // iOS Safari AGGRESSIVE fix: reconnect stream after DOM manipulation
+    if (videoElement && stream) {
+        const wasPlaying = !videoElement.paused;
+        
+        // Force reconnection
+        videoElement.srcObject = null;
+        
+        setTimeout(() => {
+            videoElement.srcObject = stream;
+            
+            if (wasPlaying) {
+                // iOS needs more time to process stream reconnection
+                const playDelay = IS_IOS ? 150 : 0;
+                
+                setTimeout(() => {
+                    videoElement.play().catch(err => {
+                        console.error('[CRITICAL] Failed to restart video:', err);
+                        // Last resort: reinitialize camera
+                        initCamera().catch(e => console.error('Camera reinit failed:', e));
+                    });
+                }, playDelay);
+            }
+        }, 50); // Small delay for iOS to process
     }
 }
 
@@ -346,6 +392,17 @@ let captureDebounceTimer = null;
 let currentCapturingClass = null;
 
 async function startCapture(className) {
+    // iOS Safari: ALWAYS verify stream before capture
+    if (!stream || !stream.active) {
+        console.error('[CRITICAL] Stream not active, reinitializing...');
+        try {
+            await initCamera();
+        } catch (err) {
+            errorElement.textContent = 'Камера не активна. Перезагрузите страницу.';
+            return;
+        }
+    }
+    
     // Check debounce timer for mobile touch events
     if (captureDebounceTimer) {
         console.log('[MOBILE FIX] Capture debounced');
@@ -379,6 +436,7 @@ async function startCapture(className) {
     }, 150); // 150ms protection from double tap
     
     isCapturing = true;
+    isDOMManipulationSafe = false;
     currentCapturingClass = className;
     console.log(`[MOBILE FIX] Starting capture for ${className}`);
     
@@ -430,6 +488,7 @@ async function startCapture(className) {
 function stopCapture() {
     console.log('[MOBILE FIX] Stopping capture');
     isCapturing = false;
+    isDOMManipulationSafe = true;
     currentCapturingClass = null;
     
     if (captureInterval) {
@@ -713,6 +772,33 @@ saveModelBtn.addEventListener('click', saveModelToStorage);
 loadModelBtn.addEventListener('click', loadModelFromStorage);
 clearModelBtn.addEventListener('click', clearModel);
 flipCameraBtn.addEventListener('click', flipCamera);
+
+// Restart camera button handler
+if (restartCameraBtn) {
+    restartCameraBtn.addEventListener('click', async () => {
+        console.log('[MANUAL] Camera restart requested');
+        stopCapture();
+        stopRecognition();
+        
+        try {
+            if (stream) {
+                stream.getTracks().forEach(track => track.stop());
+            }
+            await initCamera();
+            alert('✅ Камера перезапущена!');
+            restartCameraBtn.style.display = 'none';
+        } catch (err) {
+            alert('❌ Не удалось перезапустить камеру: ' + err.message);
+        }
+    });
+}
+
+// Show restart button on video/stream errors
+window.addEventListener('error', (e) => {
+    if (restartCameraBtn && (e.message.includes('video') || e.message.includes('stream'))) {
+        restartCameraBtn.style.display = 'block';
+    }
+});
 
 // Auto-save on page unload
 window.addEventListener('beforeunload', () => {
