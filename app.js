@@ -339,8 +339,8 @@ function renderClasses() {
     // Re-attach event listeners
     attachClassEventListeners();
     
-    // iOS Safari: NEVER touch video during DOM manipulation!
-    // Video is now in isolated container, but still verify
+    // iOS Safari: NEVER modify video element or srcObject during DOM manipulation!
+    // Video is now in isolated container, but still verify state
     console.log('[v8] Classes rendered, video state:', {
         paused: videoElement?.paused,
         readyState: videoElement?.readyState,
@@ -389,7 +389,6 @@ async function startCapture(className) {
         });
         
         errorElement.textContent = '⚠️ Камера не активна! Нажмите кнопку "Перезапустить"';
-        restartCameraBtn.style.display = 'block';
         restartCameraBtn.classList.add('pulse'); // Add animation
         return;
     }
