@@ -164,10 +164,13 @@ async function loadModelCatalog() {
 
 // v13: Helper to get selected model id from UI
 function getSelectedModelId() {
-    return modelSelect.value || currentModelId || '';
+    // Prioritize UI select value over internal state
+    const selectValue = modelSelect.value;
+    return selectValue !== '' ? selectValue : (currentModelId || '');
 }
 
 // v13: Helper to require selected model id (validates admin mode and selection)
+// Note: This function has a side effect of syncing currentModelId with the UI selection
 function requireSelectedModelId() {
     if (!isAdminMode) {
         alert('Admin access required');
@@ -1723,9 +1726,10 @@ function setupEventListeners() {
     clearModelBtn.addEventListener('click', clearModel);
     
     // v13: Sync currentModelId when select changes
+    // Note: Only sync when the value actually changes to avoid loops with updateModelSelect()
     modelSelect.addEventListener('change', () => {
         const newValue = modelSelect.value;
-        if (newValue) {
+        if (newValue && newValue !== currentModelId) {
             currentModelId = newValue;
             console.log(`[${APP_VERSION}] Model selection changed to: ${currentModelId}`);
         }
