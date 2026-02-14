@@ -16,6 +16,8 @@ const STORAGE_KEY = 'myCarDetectorModel';
 const CONFIDENCE_THRESHOLD = 0.80;
 const APP_VERSION = 'v7';
 const IS_IOS = /iPhone|iPad|iPod/.test(navigator.userAgent);
+const IOS_VIDEO_READY_DELAY = 400; // iOS needs more time for video initialization
+const DEFAULT_VIDEO_READY_DELAY = 200;
 
 // UI Elements
 const trainingTab = document.getElementById('training-tab');
@@ -234,9 +236,9 @@ function deleteClass(className) {
 
 // Render classes
 function renderClasses() {
-    // iOS Safari: check if stream is still active and connected to video element
-    if (stream && !stream.active && videoElement && videoElement.srcObject === stream) {
-        console.log('[MOBILE FIX] Stream lost, reinitializing camera...');
+    // iOS Safari: check if stream is still active or disconnected from video element
+    if (stream && videoElement && (!stream.active || videoElement.srcObject !== stream)) {
+        console.log('[MOBILE FIX] Stream lost or disconnected, reinitializing camera...');
         initCamera().catch(err => {
             console.error('[MOBILE FIX] Failed to reinit camera:', err);
         });
@@ -344,7 +346,7 @@ let captureDebounceTimer = null;
 let currentCapturingClass = null;
 
 async function startCapture(className) {
-    // Debounce for mobile touch events - set timer BEFORE processing
+    // Check debounce timer for mobile touch events
     if (captureDebounceTimer) {
         console.log('[MOBILE FIX] Capture debounced');
         return;
@@ -394,8 +396,7 @@ async function startCapture(className) {
         try {
             // Check video is ready - ensure it has actual pixel data
             if (!videoElement.videoWidth || !videoElement.videoHeight || videoElement.readyState < 2) {
-                // iOS needs more time for video to be ready
-                const retryDelay = IS_IOS ? 400 : 200;
+                const retryDelay = IS_IOS ? IOS_VIDEO_READY_DELAY : DEFAULT_VIDEO_READY_DELAY;
                 captureInterval = setTimeout(captureFrame, retryDelay);
                 return;
             }
