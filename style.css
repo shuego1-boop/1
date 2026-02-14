@@ -363,3 +363,20 @@ h1 {
         width: 100%;
     }
 }
+
+/* v10: Capture button styles */
+#capture-btn:hover:not(:disabled) {
+    transform: scale(1.02);
+    box-shadow: 0 0 20px rgba(88, 166, 255, 0.4);
+}
+
+#capture-btn:active:not(:disabled) {
+    transform: scale(0.98);
+}
+
+#capture-btn:disabled {
+    background: #21262d !important;
+    color: #484f58 !important;
+    cursor: not-allowed;
+    opacity: 0.5;
+}
